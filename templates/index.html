@@ -90,17 +90,17 @@
 
   <div class="search-box">
     <div class="input-wrapper">
-      <input type="text" id="query-input" placeholder="輸入查詢語句，例如：我想看前扣帶迴但是不要杏仁核 或 PCC but not vmPFC" autocomplete="off" autofocus>
+      <input type="text" id="query-input" placeholder="輸入查詢語句，例如：我想看前扣帶迴但是不要杏仁核" autocomplete="off" autofocus>
       <div id="suggestions" class="suggestions-list"></div>
     </div>
     <div class="preview" id="preview-box">解析預覽：等待輸入...</div>
     
     <div class="examples">
       範例查詢：
-      <span class="chip" onclick="setQuery('除了杏仁核之外，我想看後扣帶迴')">中文倒裝倒排</span>
-      <span class="chip" onclick="setQuery('(0,-52,26) but not (-2,50,-6)')">座標分離 (0,-52,26) not (-2,50,-6)</span>
-      <span class="chip" onclick="setQuery('PCC but not vmPFC')">縮寫分離 (PCC not vmPFC)</span>
-      <span class="chip" onclick="setQuery('pain but not reward')">pain but not reward</span>
+      <span class="chip" onclick="setQuery('除了 amygdala 之外，幫我找 dlpfc')">中文倒裝</span>
+      <span class="chip" onclick="setQuery('0, -52, 26')">單點查詢</span>
+      <span class="chip" onclick="setQuery('給我看 [10, -20, 30] 不要 (-5, 15, 25)')">座標分離</span>
+      <span class="chip" onclick="setQuery('對 reward system 很有興趣，但先 pass 掉 OFC')">口語排除</span>
     </div>
 
     <button onclick="performSearch()">開始查詢</button>
@@ -247,7 +247,6 @@
         if (data.exclude) {
           msg += `，排除 [${data.exclude.display}]`;
         }
-        // 如果是 Rule Fallback 就亮橘字警告，Gemini 則亮綠字
         if (data.engine.includes("Fallback")) {
             preview.innerHTML = `<span style="color:#ffb86c;">${msg}</span> (Gemini未連通)`;
         } else {
@@ -259,7 +258,6 @@
     }
   }
 
-  
   async function performSearch() {
     hideSuggestions();
     const text = input.value.trim();
@@ -282,11 +280,12 @@
       }
 
       let apiUrl = "";
-      if (parsed.target.type === "location" && parsed.exclude && parsed.exclude.type === "location") {
-        apiUrl = `/dissociate/locations/${parsed.target.val}/${parsed.exclude.val}`;
+      const targetVal = parsed.target.val;
+      const excludeVal = parsed.exclude ? parsed.exclude.val : "none";
+
+      if (parsed.type === "locations" || parsed.target.type === "location") {
+        apiUrl = `/dissociate/locations/${targetVal}/${excludeVal}`;
       } else {
-        const targetVal = parsed.target.val;
-        const excludeVal = parsed.exclude ? parsed.exclude.val : "none";
         apiUrl = `/dissociate/terms/${encodeURIComponent(targetVal)}/${encodeURIComponent(excludeVal)}`;
       }
 
@@ -323,13 +322,17 @@
           marker: { size: 12, color: '#ffffff', symbol: 'circle' },
           type: 'scatter3d'
         });
-        traces.push({
-          x: [data.not_in[0]], y: [data.not_in[1]], z: [data.not_in[2]],
-          mode: 'markers',
-          name: '排除座標 (B)',
-          marker: { size: 12, color: '#444444', symbol: 'circle-open' },
-          type: 'scatter3d'
-        });
+
+        // 防止繪圖崩潰：只有在有 exclude 項時才繪製排除座標點
+        if (data.not_in) {
+            traces.push({
+              x: [data.not_in[0]], y: [data.not_in[1]], z: [data.not_in[2]],
+              mode: 'markers',
+              name: '排除座標 (B)',
+              marker: { size: 12, color: '#444444', symbol: 'circle-open' },
+              type: 'scatter3d'
+            });
+        }
 
         const layout = {
           paper_bgcolor: '#111111',
