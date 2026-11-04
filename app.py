@@ -27,7 +27,7 @@ def get_engine():
     return _engine
 
 # ------------------------------------------------------------------
-# 神經科學詞彙與別名對照表
+# 神經科學詞彙與別名對照表 (本地保底字典)
 # ------------------------------------------------------------------
 SYNONYM_DICT = {
     "vmpfc": "ventromedial prefrontal",
@@ -123,21 +123,21 @@ def sanitize_and_lock_output(data):
     }
 
 def robust_rule_fallback(text_input):
+    """本地正則保底解析器（當 API 徹底失效時接管）"""
     s = text_input.strip()
     coord_pattern = re.compile(r"\(?\[?\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*\]?\)?")
 
+    # 1. 倒裝型：「除了 <A> 之外/外/以外，(我想看) <B>」
     inv_match = re.search(r"^除了\s*(.+?)\s*(?:之外|以外|外)\s*[,，]?\s*(.*)$", s)
     if inv_match:
-        exclude_part = inv_match.group(1).strip()
-        target_part = inv_match.group(2).strip()
-        return sanitize_and_lock_output({"type": "terms", "target": target_part, "exclude": exclude_part})
+        return sanitize_and_lock_output({"type": "terms", "target": inv_match.group(2), "exclude": inv_match.group(1)})
 
-    colloquial_match = re.search(r"^(.+?)(?:優先)?\s*[,，]?\s*(?:但把|但是把|不過|但|請)?\s*(.+?)\s*(?:的部分|區域)?\s*(?:拿掉|濾掉|不需要|去掉|別包含|排除|不要)$", s)
-    if colloquial_match:
-        target_part = colloquial_match.group(1).strip()
-        exclude_part = colloquial_match.group(2).strip()
-        return sanitize_and_lock_output({"type": "terms", "target": target_part, "exclude": exclude_part})
+    # 2. 尾綴否定型：「<A> 優先，不過/但 <B> 不需要/拿掉/濾掉」
+    tail_match = re.search(r"^(.+?)(?:優先)?\s*[,，]?\s*(?:但把|但是把|不過|但|請)?\s*(.+?)\s*(?:的部分|區域)?\s*(?:拿掉|濾掉|不需要|去掉|別包含|排除|不要)$", s)
+    if tail_match:
+        return sanitize_and_lock_output({"type": "terms", "target": tail_match.group(1), "exclude": tail_match.group(2)})
 
+    # 3. 中間否定型分割
     neg_pattern = r"\bbut\s+not\b|\bwithout\b|\bexcept\b|\bexcluding\b|\bnot\b|\bminus\b|\bno\b|但不要|不要|沒有|排除|別包含|拿掉|濾掉|去掉|非"
     match = re.search(neg_pattern, s, flags=re.IGNORECASE)
 
@@ -162,8 +162,8 @@ def parse_with_gemini(user_input):
     api_key = os.getenv("GEMINI_API_KEY")
 
     if genai and api_key:
-        # 模型候選清單：主模型若遇 503 高負載，自動切換至備援模型
-        candidate_models = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        # 模型候選清單：自動在穩定版與最新版之間輪詢，防止單一模型 503
+        candidate_models = ["gemini-1.5-flash", "gemini-2.0-flash-exp"]
         client = genai.Client(api_key=api_key)
 
         for model_name in candidate_models:
@@ -184,14 +184,16 @@ def parse_with_gemini(user_input):
                 except Exception as e:
                     err_msg = str(e)
                     print(f"[{model_name} Attempt {retry+1} Failed]: {err_msg}")
-                    # 若為 503 暫時高負載，稍作休眠後重試或切換模型
-                    if "503" in err_msg or "UNAVAILABLE" in err_msg:
+                    # 遇到 503 伺服器高負載，休眠 0.5 秒後自動重試
+                    if "503" in err_msg or "UNAVAILABLE" in err_msg or "429" in err_msg:
                         time.sleep(0.5)
                         continue
-                    break  # 若非 503 錯誤則嘗試下一個模型
+                    break # 其他錯誤直接跳下一個模型
     else:
         print("[Notice] GEMINI_API_KEY not set or SDK missing. Using fallback parser.")
 
+    # 如果所有 API 呼叫都失敗，無縫接軌本地保底解析
+    print("[Fallback] Engaging robust rule fallback parser.")
     return robust_rule_fallback(user_input)
 
 # ------------------------------------------------------------------
@@ -364,7 +366,7 @@ def create_app():
 
     @app.get("/version", endpoint="version")
     def version():
-        return "dissociate-v15 (503 Multi-Model Fallback & Auto-Retry)"
+        return "dissociate-v16 (Hybrid Funnel: LLM Auto-Retry + Rule Fallback)"
 
     @app.get("/test_db", endpoint="test_db")
     def test_db():
