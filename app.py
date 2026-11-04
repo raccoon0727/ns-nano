@@ -27,7 +27,7 @@ def get_engine():
     return _engine
 
 # ------------------------------------------------------------------
-# 神經科學詞彙與別名對照表 (本地保底字典)
+# 怪物級本地字典 (就算沒有 LLM 也能精準翻譯)
 # ------------------------------------------------------------------
 SYNONYM_DICT = {
     "vmpfc": "ventromedial prefrontal",
@@ -35,9 +35,12 @@ SYNONYM_DICT = {
     "acc": "anterior cingulate",
     "dlpfc": "dorsolateral prefrontal",
     "dacc": "dorsal anterior cingulate",
-    "ofc": "orbitofrontal cortex",
+    "ofc": "orbitofrontal",
     "dmn": "default mode",
     "amy": "amygdala",
+    "sma": "supplementary motor",
+    "pmc": "premotor",
+    "ffa": "fusiform face",
     "前扣帶迴": "anterior cingulate",
     "後扣帶迴": "posterior cingulate",
     "杏仁核": "amygdala",
@@ -46,13 +49,18 @@ SYNONYM_DICT = {
     "預設模式網路": "default mode",
     "前額葉皮質": "prefrontal",
     "前額葉": "prefrontal",
+    "prefrontal cortex": "prefrontal",
     "島葉": "insula",
     "視覺": "visual",
     "聽覺": "auditory",
+    "感覺": "sensory",
+    "感覺皮質": "sensory",
     "海馬迴": "hippocampus",
     "海馬體": "hippocampus",
     "海馬旁回": "parahippocampal",
     "紋狀體": "striatum",
+    "腹側紋狀體": "ventral striatum",
+    "ventral striatum": "ventral striatum",
     "視丘": "thalamus",
     "基底核": "basal ganglia",
     "小腦": "cerebellum",
@@ -60,8 +68,13 @@ SYNONYM_DICT = {
     "注意力": "attention",
     "語言": "language",
     "運動": "motor",
+    "運動皮質": "motor",
+    "motor cortex": "motor",
     "疼痛": "pain",
     "獎勵": "reward",
+    "reward system": "reward",
+    "情緒": "emotion",
+    "臉部辨識": "face recognition",
 }
 
 GEMINI_SYSTEM_INSTRUCTION = """
@@ -77,28 +90,30 @@ GEMINI_SYSTEM_INSTRUCTION = """
 
 【解析規則】
 1. 正負向識別：
-   - 識別所有否定排除語義（包括但不限於：拿掉、濾掉、不需要、別包含、去掉、去除、排除、不要、沒有、非、but not, without, except, excluding, not, minus）。
+   - 識別所有否定排除語義（包括但不限於：拿掉、濾掉、不需要、別包含、去掉、去除、排除、不要、沒有、非、but not, without, except, excluding, not, minus, ignore, pass掉, 剔除, 扣除, 避開）。
    - 被否定詞修飾的實體歸入 "exclude"，想要保留或主要研究的實體歸入 "target"。
-   - 倒裝句（例：「除了杏仁核之外，我想看後扣帶迴」）中，"target" 是 posterior cingulate，"exclude" 是 amygdala。
 2. 座標規格：
-   - MNI 座標（如 [10, -18, 8] 或 (0, -52, 26)）轉換為 "x_y_z" 底線格式，此時 "type" 為 "locations"。
+   - MNI 座標轉換為 "x_y_z" 底線格式，此時 "type" 為 "locations"。
 3. 詞彙標準化：
-   - 中文必須翻譯為標準英文小寫詞彙（例如：海馬迴 -> hippocampus, 島葉 -> insula, 紋狀體 -> striatum）。
-   - 縮寫轉全稱（例：PCC -> posterior cingulate, vmPFC -> ventromedial prefrontal）。
+   - 中文必須翻譯為標準英文小寫詞彙。
+   - 縮寫轉全稱（例：SMA -> supplementary motor, FFA -> fusiform face）。
 """
 
 def clean_term_entity(raw_text):
     if not raw_text:
         return ""
     t = raw_text.strip().lower()
-    t = re.sub(r"^[我想要請幫我找查尋看包含研究只保留留\s]+", "", t)
-    t = re.sub(r"(?:的部分|區域|相關)?$", "", t)
+    # 移除句首的雜訊
+    t = re.sub(r"^[我想要請幫找查尋看包含研究只保留留關注對\s]+", "", t)
+    # 移除句尾的雜訊
+    t = re.sub(r"(?:的部分|區域|相關|活化|介入|很有興趣|就免了)?$", "", t)
+    t = re.sub(r"^(?:這次的\s*analysis\s*)", "", t)
     t = re.sub(r"[之以外，,。\s優先]+$", "", t)
     t = re.sub(r"^[之以外，,。\s]+", "", t)
     t = t.strip()
     return SYNONYM_DICT.get(t, t)
 
-def sanitize_and_lock_output(data):
+def sanitize_and_lock_output(data, engine="Rule Fallback"):
     q_type = data.get("type", "terms")
     if q_type not in ["terms", "locations"]:
         q_type = "terms"
@@ -117,32 +132,32 @@ def sanitize_and_lock_output(data):
 
     return {
         "ok": True,
+        "engine": engine,  # 標記使用的是哪個引擎
         "type": q_type,
         "target": {"type": "location" if q_type == "locations" else "term", "val": target_val, "display": target_val},
         "exclude": {"type": "location" if q_type == "locations" else "term", "val": exclude_val, "display": exclude_val} if exclude_val else None
     }
 
 def robust_rule_fallback(text_input):
-    """本地正則保底解析器（當 API 徹底失效時接管）"""
     s = text_input.strip()
     coord_pattern = re.compile(r"\(?\[?\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*\]?\)?")
 
-    # 1. 倒裝型：「除了 <A> 之外/外/以外，(我想看) <B>」
-    inv_match = re.search(r"^除了\s*(.+?)\s*(?:之外|以外|外)\s*[,，]?\s*(.*)$", s)
+    inv_match = re.search(r"^(?:除了|避開|ignore)\s*(.+?)\s*(?:之外|以外|外)?\s*[,，]?\s*(.*)$", s, flags=re.IGNORECASE)
     if inv_match:
-        return sanitize_and_lock_output({"type": "terms", "target": inv_match.group(2), "exclude": inv_match.group(1)})
+        return sanitize_and_lock_output({"type": "terms", "target": inv_match.group(2), "exclude": inv_match.group(1)}, "Rule Fallback")
 
-    # 2. 尾綴否定型：「<A> 優先，不過/但 <B> 不需要/拿掉/濾掉」
-    tail_match = re.search(r"^(.+?)(?:優先)?\s*[,，]?\s*(?:但把|但是把|不過|但|請)?\s*(.+?)\s*(?:的部分|區域)?\s*(?:拿掉|濾掉|不需要|去掉|別包含|排除|不要)$", s)
-    if tail_match:
-        return sanitize_and_lock_output({"type": "terms", "target": tail_match.group(1), "exclude": tail_match.group(2)})
+    colloquial_match = re.search(r"^(.+?)(?:優先)?\s*[,，]?\s*(?:但把|但是把|不過|但|請|至於)?\s*(.+?)\s*(?:的部分|區域)?\s*(?:拿掉|濾掉|不需要|去掉|別包含|排除|不要|就免了)$", s)
+    if colloquial_match:
+        return sanitize_and_lock_output({"type": "terms", "target": colloquial_match.group(1), "exclude": colloquial_match.group(2)}, "Rule Fallback")
 
-    # 3. 中間否定型分割
-    neg_pattern = r"\bbut\s+not\b|\bwithout\b|\bexcept\b|\bexcluding\b|\bnot\b|\bminus\b|\bno\b|但不要|不要|沒有|排除|別包含|拿掉|濾掉|去掉|非"
+    # 擴增所有變態口語否定詞
+    neg_pattern = r"\bbut\s+not\b|\bwithout\b|\bexcept\b|\bexcluding\b|\bnot\b|\bminus\b|\bno\b|\bignore\b|但先pass\s*掉|pass\s*掉|剔除(?:掉)?|扣除(?:掉)?|不包含|避開|但不要|不要|沒有|排除|別包含|拿掉|濾掉|去掉|非"
     match = re.search(neg_pattern, s, flags=re.IGNORECASE)
 
     def extract_entity(chunk):
         chunk = chunk.strip()
+        # 把諸如 "target is -4, 28, 32" 的雜言去掉
+        chunk = re.sub(r"^(?:target\s+is|給我看|這(?:個)?點)\s*", "", chunk, flags=re.IGNORECASE)
         m = coord_pattern.search(chunk)
         if m:
             coords = [float(m.group(1)), float(m.group(2)), float(m.group(3))]
@@ -156,14 +171,13 @@ def robust_rule_fallback(text_input):
         t_type, target_str = extract_entity(s)
         exclude_str = None
 
-    return sanitize_and_lock_output({"type": t_type, "target": target_str, "exclude": exclude_str})
+    return sanitize_and_lock_output({"type": t_type, "target": target_str, "exclude": exclude_str}, "Rule Fallback")
 
 def parse_with_gemini(user_input):
     api_key = os.getenv("GEMINI_API_KEY")
 
     if genai and api_key:
-        # 模型候選清單：自動在穩定版與最新版之間輪詢，防止單一模型 503
-        candidate_models = ["gemini-1.5-flash", "gemini-2.0-flash-exp"]
+        candidate_models = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
         client = genai.Client(api_key=api_key)
 
         for model_name in candidate_models:
@@ -179,21 +193,15 @@ def parse_with_gemini(user_input):
                         )
                     )
                     parsed = json.loads(response.text.strip())
-                    print(f"[Gemini Success ({model_name})] Parsed: {parsed}")
-                    return sanitize_and_lock_output(parsed)
+                    return sanitize_and_lock_output(parsed, f"Gemini ({model_name})")
                 except Exception as e:
                     err_msg = str(e)
                     print(f"[{model_name} Attempt {retry+1} Failed]: {err_msg}")
-                    # 遇到 503 伺服器高負載，休眠 0.5 秒後自動重試
                     if "503" in err_msg or "UNAVAILABLE" in err_msg or "429" in err_msg:
                         time.sleep(0.5)
                         continue
-                    break # 其他錯誤直接跳下一個模型
-    else:
-        print("[Notice] GEMINI_API_KEY not set or SDK missing. Using fallback parser.")
+                    break
 
-    # 如果所有 API 呼叫都失敗，無縫接軌本地保底解析
-    print("[Fallback] Engaging robust rule fallback parser.")
     return robust_rule_fallback(user_input)
 
 # ------------------------------------------------------------------
@@ -366,7 +374,7 @@ def create_app():
 
     @app.get("/version", endpoint="version")
     def version():
-        return "dissociate-v16 (Hybrid Funnel: LLM Auto-Retry + Rule Fallback)"
+        return "dissociate-v17 (Monster Fallback + Engine Tracker)"
 
     @app.get("/test_db", endpoint="test_db")
     def test_db():
