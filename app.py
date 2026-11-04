@@ -111,13 +111,11 @@ def create_app():
 
         # 使用等值比對 (=) 走索引，避免 Full Table Scan 造成 Timeout
         ids_sql = """
-            SELECT DISTINCT a.study_id 
-            FROM ns.annotations_terms a
-            WHERE a.term = :a
-              AND NOT EXISTS (
-                  SELECT 1 FROM ns.annotations_terms b 
-                  WHERE b.study_id = a.study_id AND b.term = :b
-              )
+            SELECT DISTINCT study_id FROM ns.annotations_terms
+            WHERE (term = :a OR right(term, char_length(:a) + 2) = '__' || :a)
+              AND study_id NOT IN (
+                  SELECT study_id FROM ns.annotations_terms
+                  WHERE term = :b OR right(term, char_length(:b) + 2) = '__' || :b)
         """
         return _studies_response(
             ids_sql,
