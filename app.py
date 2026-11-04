@@ -5,7 +5,6 @@ import re
 import json
 from sqlalchemy import create_engine, text
 
-# 引用 Google GenAI SDK
 try:
     from google import genai
     from google.genai import types
@@ -26,6 +25,30 @@ def get_engine():
     _engine = create_engine(db_url, pool_pre_ping=True)
     return _engine
 
+# ------------------------------------------------------------------
+# 神經科學詞彙與別名對照表
+# ------------------------------------------------------------------
+SYNONYM_DICT = {
+    "vmpfc": "ventromedial prefrontal",
+    "pcc": "posterior cingulate",
+    "acc": "anterior cingulate",
+    "dlpfc": "dorsolateral prefrontal",
+    "dacc": "dorsal anterior cingulate",
+    "ofc": "orbitofrontal cortex",
+    "dmn": "default mode",
+    "amy": "amygdala",
+    "前扣帶迴": "anterior cingulate",
+    "後扣帶迴": "posterior cingulate",
+    "杏仁核": "amygdala",
+    "腹內側前額葉": "ventromedial prefrontal",
+    "背外側前額葉": "dorsolateral prefrontal",
+    "預設模式網路": "default mode",
+    "工作記憶": "working memory",
+    "注意力": "attention",
+    "疼痛": "pain",
+    "獎勵": "reward",
+}
+
 GEMINI_SYSTEM_INSTRUCTION = """
 你是一個專精於神經科學資料庫 Neurosynth 的嚴格語意解析器。
 你的職責是將使用者的任意口語、中英夾雜或倒裝句，轉換為符合後端 API 規格的結構化 JSON 物件。
@@ -37,127 +60,91 @@ GEMINI_SYSTEM_INSTRUCTION = """
    - "target": 字串，代表【要包含、正向選取】的大腦區域、概念或座標。
    - "exclude": 字串或 null，代表【要排除、否定、去除】的大腦區域、概念或座標；若無排除項目則必須為 null。
 
-【解析規則與執行順序】
-Step 1. 識別正負向（排除邏輯）：
-   - 找出句子中代表排除的詞（如：but not, without, except, excluding, not, 但不要, 不要, 排除, 去除, 除了...之外）。
-   - 被排除詞修飾的實體【必須】歸入 "exclude"。
-   - 使用者想要觀察、主要查詢的主體【必須】歸入 "target"。
-   - 即使使用者倒裝（如：「除了杏仁核之外，我想看後扣帶迴」），"target" 依然是 posterior cingulate，"exclude" 依然是 amygdala。
+【解析規則】
+1. 正負向識別：
+   - 找出代表排除的詞（but not, without, except, excluding, not, 但不要, 不要, 排除, 去除, 除了...之外）。
+   - 被排除詞修飾的實體必須歸入 "exclude"。主要欲查詢的主體歸入 "target"。
+   - 倒裝句（例：「除了杏仁核之外，我想看後扣帶迴」）中，"target" 是 posterior cingulate，"exclude" 是 amygdala。
+2. 座標規格：
+   - MNI 座標（如 (0, -52, 26)）轉換為 "x_y_z" 底線格式（"0_-52_26"），此時 "type" 為 "locations"。
+3. 詞彙標準化：
+   - 中文必須翻譯為標準英文小寫詞彙。
+   - 縮寫轉全稱（例：PCC -> posterior cingulate、vmPFC -> ventromedial prefrontal、amy -> amygdala）。
 
-Step 2. 判斷實體型態 (type)：
-   - 若輸入為 MNI 空間座標（如 "(0, -52, 26)" 或 "0 -52 26"），"type" 設為 "locations"，並轉為底線相連格式："x_y_z"（例如 "0_-52_26"）。
-   - 若為解剖結構、腦網絡或認知詞彙，"type" 設為 "terms"。
-
-Step 3. 詞彙標準化（Neurosynth 規範）：
-   - 中文一律翻譯為英文標準小寫詞彙。
-   - 去除 "cortex"、"area" 等多餘後綴（例如 "anterior cingulate cortex" -> "anterior cingulate"）。
-   - 常見縮寫與別名強制轉換為全稱：
-     * vmpfc / 腹內側前額葉 -> "ventromedial prefrontal"
-     * pcc / 後扣帶迴 -> "posterior cingulate"
-     * acc / 前扣帶迴 -> "anterior cingulate"
-     * dlpfc / 背外側前額葉 -> "dorsolateral prefrontal"
-     * ofc / 眶額葉 -> "orbitofrontal"
-     * dmn / 預設模式網絡 -> "default mode"
-     * amy / 杏仁核 -> "amygdala"
-
-【範例基準】
+【範例】
 輸入: "除了杏仁核之外，我想看後扣帶迴"
 輸出: {"type": "terms", "target": "posterior cingulate", "exclude": "amygdala"}
 
 輸入: "PCC but not vmPFC"
 輸出: {"type": "terms", "target": "posterior cingulate", "exclude": "ventromedial prefrontal"}
-
-輸入: "只留 (0, -52, 26) 排除 (-2, 50, -6)"
-輸出: {"type": "locations", "target": "0_-52_26", "exclude": "-2_50_-6"}
-
-輸入: "pain except reward"
-輸出: {"type": "terms", "target": "pain", "exclude": "reward"}
-
-輸入: "只看 working memory"
-輸出: {"type": "terms", "target": "working memory", "exclude": null}
 """
 
-SYNONYMS = {
-    "vmpfc": "ventromedial prefrontal",
-    "pcc": "posterior cingulate",
-    "acc": "anterior cingulate",
-    "dlpfc": "dorsolateral prefrontal",
-    "dmn": "default mode",
-    "amy": "amygdala",
-    "前扣帶迴": "anterior cingulate",
-    "後扣帶迴": "posterior cingulate",
-    "杏仁核": "amygdala",
-    "腹內側前額葉": "ventromedial prefrontal",
-    "背外側前額葉": "dorsolateral prefrontal",
-    "預設模式網路": "default mode",
-}
-
-def clean_term(text_val):
-    if not text_val:
+def clean_term_entity(raw_text):
+    if not raw_text:
         return ""
-    t = text_val.strip().lower()
-    t = re.sub(r"^[我想要請幫我找查尋\s]+", "", t)
+    t = raw_text.strip().lower()
+    t = re.sub(r"^[我想要請幫我找查尋看包含\s]+", "", t)
     t = re.sub(r"[之以外，,。\s]+$", "", t)
     t = re.sub(r"^[之以外，,。\s]+", "", t)
     t = t.strip()
-    return SYNONYMS.get(t, t)
+    return SYNONYM_DICT.get(t, t)
 
 def sanitize_and_lock_output(data):
     q_type = data.get("type", "terms")
     if q_type not in ["terms", "locations"]:
         q_type = "terms"
 
-    target = clean_term(str(data.get("target", "")))
-    exclude = data.get("exclude")
-    if exclude is not None:
-        exclude = clean_term(str(exclude))
-        if exclude in ["", "none", "null"]:
-            exclude = None
+    target_val = clean_term_entity(str(data.get("target", "")))
+    exclude_val = data.get("exclude")
+    if exclude_val is not None:
+        exclude_val = clean_term_entity(str(exclude_val))
+        if exclude_val in ["", "none", "null"]:
+            exclude_val = None
 
     if q_type == "locations":
-        target = re.sub(r"[(),\s]+", "_", target).strip("_")
-        if exclude:
-            exclude = re.sub(r"[(),\s]+", "_", exclude).strip("_")
+        target_val = re.sub(r"[(),\s]+", "_", target_val).strip("_")
+        if exclude_val:
+            exclude_val = re.sub(r"[(),\s]+", "_", exclude_val).strip("_")
 
     return {
         "ok": True,
         "type": q_type,
-        "target": {"type": "location" if q_type == "locations" else "term", "val": target, "display": target},
-        "exclude": {"type": "location" if q_type == "locations" else "term", "val": exclude, "display": exclude} if exclude else None
+        "target": {"type": "location" if q_type == "locations" else "term", "val": target_val, "display": target_val},
+        "exclude": {"type": "location" if q_type == "locations" else "term", "val": exclude_val, "display": exclude_val} if exclude_val else None
     }
 
-def fallback_rule_parser(user_input):
-    """強健的本地備援規則：處理倒裝句與否定詞"""
-    text = user_input.strip()
+def robust_rule_fallback(text_input):
+    """強固型本地倒裝與否定句解析器"""
+    s = text_input.strip()
     coord_pattern = re.compile(r"\(?\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*\)?")
 
-    # 1. 處理「除了 A 之外，(我想看) B」倒裝型
-    invert_match = re.search(r"^(?:除了|除了看)\s*(.+?)\s*(?:之外|以外|外)?\s*[,，]?\s*(?:我想看|我要|看|找|包含)?\s*(.+)$", text)
-    if invert_match:
-        exclude_raw = invert_match.group(1)
-        target_raw = invert_match.group(2)
-        return sanitize_and_lock_output({"type": "terms", "target": target_raw, "exclude": exclude_raw})
+    # 1. 精準匹配「除了 <排除項> 之外/以外/外，(我想看) <目標項>」
+    inv_match = re.search(r"^除了\s*(.+?)\s*(?:之外|以外|外)\s*[,，]?\s*(.*)$", s)
+    if inv_match:
+        exclude_part = inv_match.group(1).strip()
+        target_part = inv_match.group(2).strip()
+        return sanitize_and_lock_output({"type": "terms", "target": target_part, "exclude": exclude_part})
 
-    # 2. 處理標準「A but not / 不要 B」型
+    # 2. 匹配標準「<目標> but not / 不要 / 排除 <排除項>」
     neg_pattern = r"\bbut\s+not\b|\bwithout\b|\bexcept\b|\bexcluding\b|\bnot\b|但不要|不要|沒有|排除|非"
-    match = re.search(neg_pattern, text, flags=re.IGNORECASE)
+    match = re.search(neg_pattern, s, flags=re.IGNORECASE)
 
-    def parse_chunk(s):
-        s = s.strip()
-        m = coord_pattern.search(s)
+    def extract_entity(chunk):
+        chunk = chunk.strip()
+        m = coord_pattern.search(chunk)
         if m:
-            c = [float(m.group(1)), float(m.group(2)), float(m.group(3))]
-            return "locations", f"{int(c[0])}_{int(c[1])}_{int(c[2])}"
-        return "terms", s
+            coords = [float(m.group(1)), float(m.group(2)), float(m.group(3))]
+            return "locations", f"{int(coords[0])}_{int(coords[1])}_{int(coords[2])}"
+        return "terms", chunk
 
     if match:
-        t_type, target = parse_chunk(text[:match.start()])
-        _, exclude = parse_chunk(text[match.end():])
+        t_type, target_str = extract_entity(s[:match.start()])
+        _, exclude_str = extract_entity(s[match.end():])
     else:
-        t_type, target = parse_chunk(text)
-        exclude = None
+        t_type, target_str = extract_entity(s)
+        exclude_str = None
 
-    return sanitize_and_lock_output({"type": t_type, "target": target, "exclude": exclude})
+    return sanitize_and_lock_output({"type": t_type, "target": target_str, "exclude": exclude_str})
 
 def parse_with_gemini(user_input):
     api_key = os.getenv("GEMINI_API_KEY")
@@ -174,16 +161,18 @@ def parse_with_gemini(user_input):
                     response_mime_type="application/json",
                 )
             )
-            raw = response.text.strip()
-            parsed = json.loads(raw)
+            parsed = json.loads(response.text.strip())
+            print(f"[Gemini Success] Parsed: {parsed}")
             return sanitize_and_lock_output(parsed)
         except Exception as e:
-            print(f"[Gemini Error]: {e}, falling back to rule parser.")
+            print(f"[Gemini API Failed]: {e}, switching to fallback rule.")
+    else:
+        print("[Notice] GEMINI_API_KEY not found or google-genai not loaded. Using fallback rule.")
 
-    return fallback_rule_parser(user_input)
+    return robust_rule_fallback(user_input)
 
 # ------------------------------------------------------------------
-# Flask App
+# Flask App Factory
 # ------------------------------------------------------------------
 def create_app():
     app = Flask(__name__)
@@ -346,13 +335,13 @@ def create_app():
         """
         return _studies_response(
             ids_sql,
-            {"ax": ax, "ay": ay, "az": az, "bx": bx, "by": bz, "r": r},
+            {"ax": ax, "ay": ay, "az": az, "bx": bx, "by": by, "bz": bz, "r": r},
             {"type": "locations", "in": [ax, ay, az], "not_in": [bx, by, bz], "radius_mm": r},
             fetch_points=True)
 
     @app.get("/version", endpoint="version")
     def version():
-        return "dissociate-v11 (Robust Parser with Inverted Sentence Support)"
+        return "dissociate-v12 (Fixed Inverted Regex + Gemini Fallback Logging)"
 
     @app.get("/test_db", endpoint="test_db")
     def test_db():
