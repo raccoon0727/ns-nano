@@ -153,7 +153,7 @@ def parse_with_gemini(user_input):
         try:
             client = genai.Client(api_key=api_key)
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.8-flash",
                 contents=user_input,
                 config=types.GenerateContentConfig(
                     system_instruction=GEMINI_SYSTEM_INSTRUCTION,
