@@ -26,6 +26,11 @@ def get_engine():
 def create_app():
     app = Flask(__name__)
 
+    @app.after_request
+    def add_cors_headers(resp):  # allow the front-end page to call this API
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
     @app.get("/", endpoint="health")
     def health():
         return "<p>Server working!</p>"
@@ -134,7 +139,7 @@ def create_app():
 
     @app.get("/version", endpoint="version")
     def version():
-        return "dissociate-v2 (prefix-aware terms)"
+        return "dissociate-v3 (prefix-aware terms + CORS)"
 
     @app.get("/terms/search", endpoint="terms_search")
     def terms_search():
