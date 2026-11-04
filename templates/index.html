@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Neurosynth 功能分離查詢系統</title>
-  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <script src="[https://cdn.plot.ly/plotly-2.27.0.min.js](https://cdn.plot.ly/plotly-2.27.0.min.js)"></script>
   <style>
     :root {
       --bg: #000000;
@@ -86,19 +86,20 @@
 <body>
 <div class="container">
   <h1>Neurosynth 功能分離查詢系統</h1>
-  <p class="desc">輸入腦區名稱或 MNI 座標，系統支援關鍵字自動補全與功能分離文獻檢索。</p>
+  <p class="desc">輸入腦區名稱或 MNI 座標，系統支援 LLM 語意格式鎖定、即時自動補全與 3D 空間活化點雲檢索。</p>
 
   <div class="search-box">
     <div class="input-wrapper">
-      <input type="text" id="query-input" placeholder="輸入搜尋語句，例如：posterior cingulate but not ventromedial prefrontal" autocomplete="off" autofocus>
+      <input type="text" id="query-input" placeholder="輸入查詢語句，例如：我想看前扣帶迴但是不要杏仁核 或 PCC but not vmPFC" autocomplete="off" autofocus>
       <div id="suggestions" class="suggestions-list"></div>
     </div>
     <div class="preview" id="preview-box">解析預覽：等待輸入...</div>
     
     <div class="examples">
       範例查詢：
-      <span class="chip" onclick="setQuery('posterior cingulate but not ventromedial prefrontal')">詞彙分離 (DMN)</span>
+      <span class="chip" onclick="setQuery('除了杏仁核之外，我想看後扣帶迴')">中文倒裝倒排</span>
       <span class="chip" onclick="setQuery('(0,-52,26) but not (-2,50,-6)')">座標分離 (0,-52,26) not (-2,50,-6)</span>
+      <span class="chip" onclick="setQuery('PCC but not vmPFC')">縮寫分離 (PCC not vmPFC)</span>
       <span class="chip" onclick="setQuery('pain but not reward')">pain but not reward</span>
     </div>
 
@@ -108,7 +109,7 @@
   <div id="status"></div>
 
   <div id="plot-container">
-    <div class="plot-title">3D MNI 腦部座標分佈圖</div>
+    <div class="plot-title">3D MNI 腦部真實活化點雲分佈圖</div>
     <div id="plot"></div>
   </div>
 
@@ -262,7 +263,7 @@
     const results = document.getElementById('results');
     const plotContainer = document.getElementById('plot-container');
 
-    status.innerText = "正在檢索資料庫...";
+    status.innerText = "正在經由語意解析並檢索資料庫...";
     results.innerHTML = "";
     plotContainer.style.display = "none";
 
@@ -295,20 +296,35 @@
 
       if (data.type === "locations" && data.in) {
         plotContainer.style.display = "block";
-        const traceTarget = {
+        const traces = [];
+
+        if (data.points && data.points.length > 0) {
+          traces.push({
+            x: data.points.map(p => p[0]),
+            y: data.points.map(p => p[1]),
+            z: data.points.map(p => p[2]),
+            mode: 'markers',
+            name: '文獻活化點雲 (Peaks)',
+            marker: { size: 3, color: '#888888', opacity: 0.4 },
+            type: 'scatter3d'
+          });
+        }
+
+        traces.push({
           x: [data.in[0]], y: [data.in[1]], z: [data.in[2]],
           mode: 'markers',
           name: '目標座標 (A)',
           marker: { size: 12, color: '#ffffff', symbol: 'circle' },
           type: 'scatter3d'
-        };
-        const traceExclude = {
+        });
+        traces.push({
           x: [data.not_in[0]], y: [data.not_in[1]], z: [data.not_in[2]],
           mode: 'markers',
           name: '排除座標 (B)',
-          marker: { size: 12, color: '#666666', symbol: 'circle-open' },
+          marker: { size: 12, color: '#444444', symbol: 'circle-open' },
           type: 'scatter3d'
-        };
+        });
+
         const layout = {
           paper_bgcolor: '#111111',
           plot_bgcolor: '#111111',
@@ -320,7 +336,7 @@
           margin: { l: 0, r: 0, b: 0, t: 0 },
           legend: { font: { color: '#ffffff' } }
         };
-        Plotly.newPlot('plot', [traceTarget, traceExclude], layout);
+        Plotly.newPlot('plot', traces, layout);
       }
 
       let html = "";
@@ -337,7 +353,7 @@
             <div class="paper-title">${title}</div>
             <div class="paper-meta">${authors} (${year}) - <em>${journal}</em></div>
             <div>
-              <a class="pubmed-link" href="https://pubmed.ncbi.nlm.nih.gov/${studyId}/" target="_blank" rel="noopener">
+              <a class="pubmed-link" href="[https://pubmed.ncbi.nlm.nih.gov/$](https://pubmed.ncbi.nlm.nih.gov/$){studyId}/" target="_blank" rel="noopener">
                 查看 PubMed 文獻 (ID: ${studyId})
               </a>
             </div>
