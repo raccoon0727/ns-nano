@@ -243,17 +243,23 @@
       const res = await fetch(`/parse?q=${encodeURIComponent(text)}`);
       const data = await res.json();
       if (data.ok) {
-        let msg = `理解為：包含 [${data.target.display}]`;
+        let msg = `[${data.engine}] 包含 [${data.target.display}]`;
         if (data.exclude) {
           msg += `，排除 [${data.exclude.display}]`;
         }
-        preview.innerText = msg;
+        // 如果是 Rule Fallback 就亮橘字警告，Gemini 則亮綠字
+        if (data.engine.includes("Fallback")) {
+            preview.innerHTML = `<span style="color:#ffb86c;">${msg}</span> (Gemini未連通)`;
+        } else {
+            preview.innerHTML = `<span style="color:#50fa7b;">${msg}</span>`;
+        }
       }
     } catch(e) {
       console.error(e);
     }
   }
 
+  
   async function performSearch() {
     hideSuggestions();
     const text = input.value.trim();
