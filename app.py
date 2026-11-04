@@ -87,9 +87,10 @@ def create_app():
 
     @app.get("/dissociate/terms/<term_a>/<term_b>", endpoint="dissociate_terms")
     def dissociate_terms(term_a, term_b):
-        """Studies that mention term_a but NOT term_b (A \\ B)."""
-        a = term_a.replace("_", " ").strip().lower()
-        b = term_b.replace("_", " ").strip().lower()
+        """Studies that mention term_a but NOT term_b (A \ B)."""
+        # Neurosynth 詞彙庫是以底線連接詞彙（如 posterior_cingulate）
+        a = term_a.replace(" ", "_").strip().lower()
+        b = term_b.replace(" ", "_").strip().lower()
         if not a or not b:
             abort(400, "both terms are required")
         ids_sql = """
