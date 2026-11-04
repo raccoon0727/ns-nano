@@ -19,8 +19,7 @@
       line-height: 1.5;
     }
     .container { max-width: 900px; margin: 0 auto; }
-    h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 6px; }
-    p.desc { color: var(--text-muted); margin-bottom: 24px; font-size: 0.95rem; }
+    h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 24px; }
     .search-box {
       position: relative; background: var(--panel); padding: 24px;
       border-radius: 8px; border: 1px solid var(--border);
@@ -79,7 +78,6 @@
 <body>
 <div class="container">
   <h1>Neurosynth 功能分離查詢系統</h1>
-  <p class="desc">輸入腦區名稱或 MNI 座標，系統支援 LLM 語意格式鎖定與即時自動補全（極速版）。</p>
 
   <div class="search-box">
     <div class="input-wrapper">
@@ -299,7 +297,7 @@
             <div class="paper-title">${title}</div>
             <div class="paper-meta">${authors} (${year}) - <em>${journal}</em></div>
             <div>
-              <a class="pubmed-link" href="[https://pubmed.ncbi.nlm.nih.gov/$](https://pubmed.ncbi.nlm.nih.gov/$){studyId}/" target="_blank" rel="noopener">
+              <a class="pubmed-link" href="https://pubmed.ncbi.nlm.nih.gov/${studyId}/" target="_blank" rel="noopener">
                 查看 PubMed 文獻 (ID: ${studyId})
               </a>
             </div>
