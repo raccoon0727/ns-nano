@@ -88,19 +88,28 @@ def create_app():
     @app.get("/dissociate/terms/<term_a>/<term_b>", endpoint="dissociate_terms")
     def dissociate_terms(term_a, term_b):
         """Studies that mention term_a but NOT term_b (A \ B)."""
-        # Neurosynth 詞彙庫是以底線連接詞彙（如 posterior_cingulate）
-        a = term_a.replace(" ", "_").strip().lower()
-        b = term_b.replace(" ", "_").strip().lower()
-        if not a or not b:
+        # 去除頭尾空白、轉小寫，並將空格轉為底線
+        clean_a = term_a.strip().lower().replace(" ", "_")
+        clean_b = term_b.strip().lower().replace(" ", "_")
+        if not clean_a or not clean_b:
             abort(400, "both terms are required")
+
+        # 匹配包含前綴（如 terms_abstract_tfidf__posterior_cingulate）的格式
+        pat_a = f"%{clean_a}%"
+        pat_b = f"%{clean_b}%"
+
         ids_sql = """
             SELECT DISTINCT study_id FROM ns.annotations_terms
-            WHERE term = :a
+            WHERE LOWER(term) LIKE :pat_a
               AND study_id NOT IN (
-                  SELECT study_id FROM ns.annotations_terms WHERE term = :b)
+                  SELECT study_id FROM ns.annotations_terms WHERE LOWER(term) LIKE :pat_b
+              )
         """
-        return _studies_response(ids_sql, {"a": a, "b": b},
-                                 {"type": "terms", "in": a, "not_in": b})
+        return _studies_response(
+            ids_sql,
+            {"pat_a": pat_a, "pat_b": pat_b},
+            {"type": "terms", "in": term_a, "not_in": term_b}
+        )
 
     @app.get("/dissociate/locations/<loc_a>/<loc_b>", endpoint="dissociate_locations")
     def dissociate_locations(loc_a, loc_b):
