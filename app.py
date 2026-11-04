@@ -1,5 +1,5 @@
 # app.py
-from flask import Flask, jsonify, abort, send_file
+from flask import Flask, jsonify, abort, request, send_file
 import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
@@ -42,6 +42,94 @@ def create_app():
     def get_studies_by_coordinates(coords):
         x, y, z = map(int, coords.split("_"))
         return jsonify([x, y, z])
+
+    # ------------------------------------------------------------------
+    # Functional dissociation endpoints
+    # ------------------------------------------------------------------
+    def _limit():
+        try:
+            return max(1, min(int(request.args.get("limit", 1000)), 10000))
+        except ValueError:
+            abort(400, "limit must be an integer")
+
+    def _metadata_key(conn):
+        cols = {r[0] for r in conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'ns' AND table_name = 'metadata'"))}
+        return "study_id" if "study_id" in cols else "id"
+
+    def _studies_response(ids_sql, params, query_info):
+        eng = get_engine()
+        try:
+            with eng.begin() as conn:
+                conn.execute(text("SET search_path TO ns, public;"))
+                key = _metadata_key(conn)
+                rows = conn.execute(text(f"""
+                    WITH hits AS ({ids_sql})
+                    SELECT h.study_id,
+                           (to_jsonb(m) - 'fts') AS metadata
+                    FROM hits h
+                    LEFT JOIN ns.metadata m ON m.{key}::text = h.study_id
+                    ORDER BY h.study_id
+                    LIMIT :lim
+                """), {**params, "lim": _limit()}).mappings().all()
+                total = conn.execute(text(
+                    f"SELECT COUNT(*) FROM ({ids_sql}) t"), params).scalar()
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({
+            "ok": True,
+            **query_info,
+            "count": total,
+            "returned": len(rows),
+            "studies": [{"study_id": r["study_id"], "metadata": r["metadata"]} for r in rows],
+        })
+
+    @app.get("/dissociate/terms/<term_a>/<term_b>", endpoint="dissociate_terms")
+    def dissociate_terms(term_a, term_b):
+        """Studies that mention term_a but NOT term_b (A \\ B)."""
+        a = term_a.replace("_", " ").strip().lower()
+        b = term_b.replace("_", " ").strip().lower()
+        if not a or not b:
+            abort(400, "both terms are required")
+        ids_sql = """
+            SELECT DISTINCT study_id FROM ns.annotations_terms
+            WHERE term = :a
+              AND study_id NOT IN (
+                  SELECT study_id FROM ns.annotations_terms WHERE term = :b)
+        """
+        return _studies_response(ids_sql, {"a": a, "b": b},
+                                 {"type": "terms", "in": a, "not_in": b})
+
+    @app.get("/dissociate/locations/<loc_a>/<loc_b>", endpoint="dissociate_locations")
+    def dissociate_locations(loc_a, loc_b):
+        """Studies reporting a peak near [x1,y1,z1] but NOT near [x2,y2,z2].
+
+        'Near' = within `r` mm (default 10, override with ?r=) in 3D.
+        """
+        def parse(s):
+            try:
+                x, y, z = (float(v) for v in s.split("_"))
+            except ValueError:
+                abort(400, f"bad coordinate '{s}', expected x_y_z")
+            return x, y, z
+        try:
+            r = float(request.args.get("r", 10))
+        except ValueError:
+            abort(400, "r must be a number")
+        ax, ay, az = parse(loc_a)
+        bx, by, bz = parse(loc_b)
+        ids_sql = """
+            SELECT DISTINCT study_id FROM ns.coordinates
+            WHERE ST_3DDWithin(geom, ST_SetSRID(ST_MakePoint(:ax,:ay,:az), 4326), :r)
+              AND study_id NOT IN (
+                  SELECT study_id FROM ns.coordinates
+                  WHERE ST_3DDWithin(geom, ST_SetSRID(ST_MakePoint(:bx,:by,:bz), 4326), :r))
+        """
+        return _studies_response(
+            ids_sql,
+            {"ax": ax, "ay": ay, "az": az, "bx": bx, "by": by, "bz": bz, "r": r},
+            {"type": "locations", "in": [ax, ay, az], "not_in": [bx, by, bz], "radius_mm": r})
 
     @app.get("/test_db", endpoint="test_db")
     
