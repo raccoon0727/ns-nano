@@ -27,7 +27,7 @@ def get_engine():
     return _engine
 
 # ------------------------------------------------------------------
-# 怪物級本地字典 (就算沒有 LLM 也能精準翻譯)
+# 神經科學詞彙與別名對照表
 # ------------------------------------------------------------------
 SYNONYM_DICT = {
     "vmpfc": "ventromedial prefrontal",
@@ -103,9 +103,7 @@ def clean_term_entity(raw_text):
     if not raw_text:
         return ""
     t = raw_text.strip().lower()
-    # 移除句首的雜訊
     t = re.sub(r"^[我想要請幫找查尋看包含研究只保留留關注對\s]+", "", t)
-    # 移除句尾的雜訊
     t = re.sub(r"(?:的部分|區域|相關|活化|介入|很有興趣|就免了)?$", "", t)
     t = re.sub(r"^(?:這次的\s*analysis\s*)", "", t)
     t = re.sub(r"[之以外，,。\s優先]+$", "", t)
@@ -132,7 +130,7 @@ def sanitize_and_lock_output(data, engine="Rule Fallback"):
 
     return {
         "ok": True,
-        "engine": engine,  # 標記使用的是哪個引擎
+        "engine": engine,
         "type": q_type,
         "target": {"type": "location" if q_type == "locations" else "term", "val": target_val, "display": target_val},
         "exclude": {"type": "location" if q_type == "locations" else "term", "val": exclude_val, "display": exclude_val} if exclude_val else None
@@ -150,13 +148,11 @@ def robust_rule_fallback(text_input):
     if colloquial_match:
         return sanitize_and_lock_output({"type": "terms", "target": colloquial_match.group(1), "exclude": colloquial_match.group(2)}, "Rule Fallback")
 
-    # 擴增所有變態口語否定詞
     neg_pattern = r"\bbut\s+not\b|\bwithout\b|\bexcept\b|\bexcluding\b|\bnot\b|\bminus\b|\bno\b|\bignore\b|但先pass\s*掉|pass\s*掉|剔除(?:掉)?|扣除(?:掉)?|不包含|避開|但不要|不要|沒有|排除|別包含|拿掉|濾掉|去掉|非"
     match = re.search(neg_pattern, s, flags=re.IGNORECASE)
 
     def extract_entity(chunk):
         chunk = chunk.strip()
-        # 把諸如 "target is -4, 28, 32" 的雜言去掉
         chunk = re.sub(r"^(?:target\s+is|給我看|這(?:個)?點)\s*", "", chunk, flags=re.IGNORECASE)
         m = coord_pattern.search(chunk)
         if m:
@@ -321,6 +317,10 @@ def create_app():
 
     @app.get("/dissociate/terms/<term_a>/<term_b>", endpoint="dissociate_terms")
     def dissociate_terms(term_a, term_b):
+        # 防呆攔截：若前端誤將座標送到 terms API，自動轉導至 locations
+        if re.match(r"^-?\d+(?:\.\d+)?_-?\d+(?:\.\d+)?_-?\d+(?:\.\d+)?$", term_a):
+            return dissociate_locations(term_a, term_b)
+
         clean_a = term_a.strip().lower()
         clean_b = term_b.strip().lower()
         if not clean_a or not clean_b:
@@ -328,22 +328,35 @@ def create_app():
 
         prefix = "terms_abstract_tfidf__"
         vars_a = list({clean_a, clean_a.replace(" ", "_"), f"{prefix}{clean_a}", f"{prefix}{clean_a.replace(' ', '_')}"})
-        vars_b = list({clean_b, clean_b.replace(" ", "_"), f"{prefix}{clean_b}", f"{prefix}{clean_b.replace(' ', '_')}"})
-
-        ids_sql = """
-            SELECT DISTINCT a.study_id 
-            FROM ns.annotations_terms a
-            WHERE a.term = ANY(:a_list)
-              AND NOT EXISTS (
-                  SELECT 1 FROM ns.annotations_terms b 
-                  WHERE b.study_id = a.study_id AND b.term = ANY(:b_list)
-              )
-        """
-        return _studies_response(
-            ids_sql,
-            {"a_list": vars_a, "b_list": vars_b},
-            {"type": "terms", "in": clean_a, "not_in": clean_b}
-        )
+        
+        # 單一詞彙查詢
+        if clean_b == "none":
+            ids_sql = """
+                SELECT DISTINCT a.study_id 
+                FROM ns.annotations_terms a
+                WHERE a.term = ANY(:a_list)
+            """
+            return _studies_response(
+                ids_sql,
+                {"a_list": vars_a},
+                {"type": "terms", "in": clean_a, "not_in": None}
+            )
+        else:
+            vars_b = list({clean_b, clean_b.replace(" ", "_"), f"{prefix}{clean_b}", f"{prefix}{clean_b.replace(' ', '_')}"})
+            ids_sql = """
+                SELECT DISTINCT a.study_id 
+                FROM ns.annotations_terms a
+                WHERE a.term = ANY(:a_list)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM ns.annotations_terms b 
+                      WHERE b.study_id = a.study_id AND b.term = ANY(:b_list)
+                  )
+            """
+            return _studies_response(
+                ids_sql,
+                {"a_list": vars_a, "b_list": vars_b},
+                {"type": "terms", "in": clean_a, "not_in": clean_b}
+            )
 
     @app.get("/dissociate/locations/<loc_a>/<loc_b>", endpoint="dissociate_locations")
     def dissociate_locations(loc_a, loc_b):
@@ -357,24 +370,38 @@ def create_app():
             r = float(request.args.get("r", 10))
         except ValueError:
             abort(400, "r must be a number")
+        
         ax, ay, az = parse(loc_a)
-        bx, by, bz = parse(loc_b)
-        ids_sql = """
-            SELECT DISTINCT study_id FROM ns.coordinates
-            WHERE ST_3DDWithin(geom, ST_SetSRID(ST_MakePoint(:ax,:ay,:az), 4326), :r)
-              AND study_id NOT IN (
-                  SELECT study_id FROM ns.coordinates
-                  WHERE ST_3DDWithin(geom, ST_SetSRID(ST_MakePoint(:bx,:by,:bz), 4326), :r))
-        """
-        return _studies_response(
-            ids_sql,
-            {"ax": ax, "ay": ay, "az": az, "bx": bx, "by": by, "bz": bz, "r": r},
-            {"type": "locations", "in": [ax, ay, az], "not_in": [bx, by, bz], "radius_mm": r},
-            fetch_points=True)
+
+        # 單一座標查詢
+        if loc_b.lower() == "none":
+            ids_sql = """
+                SELECT DISTINCT study_id FROM ns.coordinates
+                WHERE ST_3DDWithin(geom, ST_SetSRID(ST_MakePoint(:ax,:ay,:az), 4326), :r)
+            """
+            return _studies_response(
+                ids_sql,
+                {"ax": ax, "ay": ay, "az": az, "r": r},
+                {"type": "locations", "in": [ax, ay, az], "not_in": None, "radius_mm": r},
+                fetch_points=True)
+        else:
+            bx, by, bz = parse(loc_b)
+            ids_sql = """
+                SELECT DISTINCT study_id FROM ns.coordinates
+                WHERE ST_3DDWithin(geom, ST_SetSRID(ST_MakePoint(:ax,:ay,:az), 4326), :r)
+                  AND study_id NOT IN (
+                      SELECT study_id FROM ns.coordinates
+                      WHERE ST_3DDWithin(geom, ST_SetSRID(ST_MakePoint(:bx,:by,:bz), 4326), :r))
+            """
+            return _studies_response(
+                ids_sql,
+                {"ax": ax, "ay": ay, "az": az, "bx": bx, "by": by, "bz": bz, "r": r},
+                {"type": "locations", "in": [ax, ay, az], "not_in": [bx, by, bz], "radius_mm": r},
+                fetch_points=True)
 
     @app.get("/version", endpoint="version")
     def version():
-        return "dissociate-v17 (Monster Fallback + Engine Tracker)"
+        return "dissociate-v18 (Single Target Routing & Plotting Fix)"
 
     @app.get("/test_db", endpoint="test_db")
     def test_db():
