@@ -3,6 +3,7 @@ from flask import Flask, jsonify, abort, request, send_file, render_template
 import os
 import re
 import json
+import time
 from sqlalchemy import create_engine, text
 
 try:
@@ -43,8 +44,22 @@ SYNONYM_DICT = {
     "腹內側前額葉": "ventromedial prefrontal",
     "背外側前額葉": "dorsolateral prefrontal",
     "預設模式網路": "default mode",
+    "前額葉皮質": "prefrontal",
+    "前額葉": "prefrontal",
+    "島葉": "insula",
+    "視覺": "visual",
+    "聽覺": "auditory",
+    "海馬迴": "hippocampus",
+    "海馬體": "hippocampus",
+    "海馬旁回": "parahippocampal",
+    "紋狀體": "striatum",
+    "視丘": "thalamus",
+    "基底核": "basal ganglia",
+    "小腦": "cerebellum",
     "工作記憶": "working memory",
     "注意力": "attention",
+    "語言": "language",
+    "運動": "motor",
     "疼痛": "pain",
     "獎勵": "reward",
 }
@@ -62,29 +77,23 @@ GEMINI_SYSTEM_INSTRUCTION = """
 
 【解析規則】
 1. 正負向識別：
-   - 找出代表排除的詞（but not, without, except, excluding, not, 但不要, 不要, 排除, 去除, 除了...之外）。
-   - 被排除詞修飾的實體必須歸入 "exclude"。主要欲查詢的主體歸入 "target"。
+   - 識別所有否定排除語義（包括但不限於：拿掉、濾掉、不需要、別包含、去掉、去除、排除、不要、沒有、非、but not, without, except, excluding, not, minus）。
+   - 被否定詞修飾的實體歸入 "exclude"，想要保留或主要研究的實體歸入 "target"。
    - 倒裝句（例：「除了杏仁核之外，我想看後扣帶迴」）中，"target" 是 posterior cingulate，"exclude" 是 amygdala。
 2. 座標規格：
-   - MNI 座標（如 (0, -52, 26)）轉換為 "x_y_z" 底線格式（"0_-52_26"），此時 "type" 為 "locations"。
+   - MNI 座標（如 [10, -18, 8] 或 (0, -52, 26)）轉換為 "x_y_z" 底線格式，此時 "type" 為 "locations"。
 3. 詞彙標準化：
-   - 中文必須翻譯為標準英文小寫詞彙。
-   - 縮寫轉全稱（例：PCC -> posterior cingulate、vmPFC -> ventromedial prefrontal、amy -> amygdala）。
-
-【範例】
-輸入: "除了杏仁核之外，我想看後扣帶迴"
-輸出: {"type": "terms", "target": "posterior cingulate", "exclude": "amygdala"}
-
-輸入: "PCC but not vmPFC"
-輸出: {"type": "terms", "target": "posterior cingulate", "exclude": "ventromedial prefrontal"}
+   - 中文必須翻譯為標準英文小寫詞彙（例如：海馬迴 -> hippocampus, 島葉 -> insula, 紋狀體 -> striatum）。
+   - 縮寫轉全稱（例：PCC -> posterior cingulate, vmPFC -> ventromedial prefrontal）。
 """
 
 def clean_term_entity(raw_text):
     if not raw_text:
         return ""
     t = raw_text.strip().lower()
-    t = re.sub(r"^[我想要請幫我找查尋看包含\s]+", "", t)
-    t = re.sub(r"[之以外，,。\s]+$", "", t)
+    t = re.sub(r"^[我想要請幫我找查尋看包含研究只保留留\s]+", "", t)
+    t = re.sub(r"(?:的部分|區域|相關)?$", "", t)
+    t = re.sub(r"[之以外，,。\s優先]+$", "", t)
     t = re.sub(r"^[之以外，,。\s]+", "", t)
     t = t.strip()
     return SYNONYM_DICT.get(t, t)
@@ -102,9 +111,9 @@ def sanitize_and_lock_output(data):
             exclude_val = None
 
     if q_type == "locations":
-        target_val = re.sub(r"[(),\s]+", "_", target_val).strip("_")
+        target_val = re.sub(r"[()\[\],\s]+", "_", target_val).strip("_")
         if exclude_val:
-            exclude_val = re.sub(r"[(),\s]+", "_", exclude_val).strip("_")
+            exclude_val = re.sub(r"[()\[\],\s]+", "_", exclude_val).strip("_")
 
     return {
         "ok": True,
@@ -114,19 +123,22 @@ def sanitize_and_lock_output(data):
     }
 
 def robust_rule_fallback(text_input):
-    """強固型本地倒裝與否定句解析器"""
     s = text_input.strip()
-    coord_pattern = re.compile(r"\(?\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*\)?")
+    coord_pattern = re.compile(r"\(?\[?\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*\]?\)?")
 
-    # 1. 精準匹配「除了 <排除項> 之外/以外/外，(我想看) <目標項>」
     inv_match = re.search(r"^除了\s*(.+?)\s*(?:之外|以外|外)\s*[,，]?\s*(.*)$", s)
     if inv_match:
         exclude_part = inv_match.group(1).strip()
         target_part = inv_match.group(2).strip()
         return sanitize_and_lock_output({"type": "terms", "target": target_part, "exclude": exclude_part})
 
-    # 2. 匹配標準「<目標> but not / 不要 / 排除 <排除項>」
-    neg_pattern = r"\bbut\s+not\b|\bwithout\b|\bexcept\b|\bexcluding\b|\bnot\b|但不要|不要|沒有|排除|非"
+    colloquial_match = re.search(r"^(.+?)(?:優先)?\s*[,，]?\s*(?:但把|但是把|不過|但|請)?\s*(.+?)\s*(?:的部分|區域)?\s*(?:拿掉|濾掉|不需要|去掉|別包含|排除|不要)$", s)
+    if colloquial_match:
+        target_part = colloquial_match.group(1).strip()
+        exclude_part = colloquial_match.group(2).strip()
+        return sanitize_and_lock_output({"type": "terms", "target": target_part, "exclude": exclude_part})
+
+    neg_pattern = r"\bbut\s+not\b|\bwithout\b|\bexcept\b|\bexcluding\b|\bnot\b|\bminus\b|\bno\b|但不要|不要|沒有|排除|別包含|拿掉|濾掉|去掉|非"
     match = re.search(neg_pattern, s, flags=re.IGNORECASE)
 
     def extract_entity(chunk):
@@ -150,24 +162,35 @@ def parse_with_gemini(user_input):
     api_key = os.getenv("GEMINI_API_KEY")
 
     if genai and api_key:
-        try:
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=user_input,
-                config=types.GenerateContentConfig(
-                    system_instruction=GEMINI_SYSTEM_INSTRUCTION,
-                    temperature=0.0,
-                    response_mime_type="application/json",
-                )
-            )
-            parsed = json.loads(response.text.strip())
-            print(f"[Gemini Success] Parsed: {parsed}")
-            return sanitize_and_lock_output(parsed)
-        except Exception as e:
-            print(f"[Gemini API Failed]: {e}, switching to fallback rule.")
+        # 模型候選清單：主模型若遇 503 高負載，自動切換至備援模型
+        candidate_models = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        client = genai.Client(api_key=api_key)
+
+        for model_name in candidate_models:
+            for retry in range(2):
+                try:
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=user_input,
+                        config=types.GenerateContentConfig(
+                            system_instruction=GEMINI_SYSTEM_INSTRUCTION,
+                            temperature=0.0,
+                            response_mime_type="application/json",
+                        )
+                    )
+                    parsed = json.loads(response.text.strip())
+                    print(f"[Gemini Success ({model_name})] Parsed: {parsed}")
+                    return sanitize_and_lock_output(parsed)
+                except Exception as e:
+                    err_msg = str(e)
+                    print(f"[{model_name} Attempt {retry+1} Failed]: {err_msg}")
+                    # 若為 503 暫時高負載，稍作休眠後重試或切換模型
+                    if "503" in err_msg or "UNAVAILABLE" in err_msg:
+                        time.sleep(0.5)
+                        continue
+                    break  # 若非 503 錯誤則嘗試下一個模型
     else:
-        print("[Notice] GEMINI_API_KEY not found or google-genai not loaded. Using fallback rule.")
+        print("[Notice] GEMINI_API_KEY not set or SDK missing. Using fallback parser.")
 
     return robust_rule_fallback(user_input)
 
@@ -341,7 +364,7 @@ def create_app():
 
     @app.get("/version", endpoint="version")
     def version():
-        return "dissociate-v12 (Fixed Inverted Regex + Gemini Fallback Logging)"
+        return "dissociate-v15 (503 Multi-Model Fallback & Auto-Retry)"
 
     @app.get("/test_db", endpoint="test_db")
     def test_db():
