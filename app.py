@@ -26,9 +26,6 @@ def get_engine():
     _engine = create_engine(db_url, pool_pre_ping=True)
     return _engine
 
-# ------------------------------------------------------------------
-# Gemini 語意解析系統提示詞（嚴格格式鎖定與神經科學詞彙標準化）
-# ------------------------------------------------------------------
 GEMINI_SYSTEM_INSTRUCTION = """
 你是一個專精於神經科學資料庫 Neurosynth 的嚴格語意解析器。
 你的職責是將使用者的任意口語、中英夾雜或倒裝句，轉換為符合後端 API 規格的結構化 JSON 物件。
@@ -80,16 +77,40 @@ Step 3. 詞彙標準化（Neurosynth 規範）：
 輸出: {"type": "terms", "target": "working memory", "exclude": null}
 """
 
+SYNONYMS = {
+    "vmpfc": "ventromedial prefrontal",
+    "pcc": "posterior cingulate",
+    "acc": "anterior cingulate",
+    "dlpfc": "dorsolateral prefrontal",
+    "dmn": "default mode",
+    "amy": "amygdala",
+    "前扣帶迴": "anterior cingulate",
+    "後扣帶迴": "posterior cingulate",
+    "杏仁核": "amygdala",
+    "腹內側前額葉": "ventromedial prefrontal",
+    "背外側前額葉": "dorsolateral prefrontal",
+    "預設模式網路": "default mode",
+}
+
+def clean_term(text_val):
+    if not text_val:
+        return ""
+    t = text_val.strip().lower()
+    t = re.sub(r"^[我想要請幫我找查尋\s]+", "", t)
+    t = re.sub(r"[之以外，,。\s]+$", "", t)
+    t = re.sub(r"^[之以外，,。\s]+", "", t)
+    t = t.strip()
+    return SYNONYMS.get(t, t)
+
 def sanitize_and_lock_output(data):
-    """防禦性校驗：確保無論 Gemini 怎麼回傳，資料型態與鍵值完全鎖定"""
     q_type = data.get("type", "terms")
     if q_type not in ["terms", "locations"]:
         q_type = "terms"
 
-    target = str(data.get("target", "")).strip().lower()
+    target = clean_term(str(data.get("target", "")))
     exclude = data.get("exclude")
     if exclude is not None:
-        exclude = str(exclude).strip().lower()
+        exclude = clean_term(str(exclude))
         if exclude in ["", "none", "null"]:
             exclude = None
 
@@ -105,8 +126,40 @@ def sanitize_and_lock_output(data):
         "exclude": {"type": "location" if q_type == "locations" else "term", "val": exclude, "display": exclude} if exclude else None
     }
 
+def fallback_rule_parser(user_input):
+    """強健的本地備援規則：處理倒裝句與否定詞"""
+    text = user_input.strip()
+    coord_pattern = re.compile(r"\(?\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*\)?")
+
+    # 1. 處理「除了 A 之外，(我想看) B」倒裝型
+    invert_match = re.search(r"^(?:除了|除了看)\s*(.+?)\s*(?:之外|以外|外)?\s*[,，]?\s*(?:我想看|我要|看|找|包含)?\s*(.+)$", text)
+    if invert_match:
+        exclude_raw = invert_match.group(1)
+        target_raw = invert_match.group(2)
+        return sanitize_and_lock_output({"type": "terms", "target": target_raw, "exclude": exclude_raw})
+
+    # 2. 處理標準「A but not / 不要 B」型
+    neg_pattern = r"\bbut\s+not\b|\bwithout\b|\bexcept\b|\bexcluding\b|\bnot\b|但不要|不要|沒有|排除|非"
+    match = re.search(neg_pattern, text, flags=re.IGNORECASE)
+
+    def parse_chunk(s):
+        s = s.strip()
+        m = coord_pattern.search(s)
+        if m:
+            c = [float(m.group(1)), float(m.group(2)), float(m.group(3))]
+            return "locations", f"{int(c[0])}_{int(c[1])}_{int(c[2])}"
+        return "terms", s
+
+    if match:
+        t_type, target = parse_chunk(text[:match.start()])
+        _, exclude = parse_chunk(text[match.end():])
+    else:
+        t_type, target = parse_chunk(text)
+        exclude = None
+
+    return sanitize_and_lock_output({"type": t_type, "target": target, "exclude": exclude})
+
 def parse_with_gemini(user_input):
-    """使用 Google Gemini API 進行語意理解與參數提取"""
     api_key = os.getenv("GEMINI_API_KEY")
 
     if genai and api_key:
@@ -121,37 +174,16 @@ def parse_with_gemini(user_input):
                     response_mime_type="application/json",
                 )
             )
-            parsed = json.loads(response.text)
+            raw = response.text.strip()
+            parsed = json.loads(raw)
             return sanitize_and_lock_output(parsed)
         except Exception as e:
-            print(f"Gemini API 解析異常，切換至備援本機規則: {e}")
+            print(f"[Gemini Error]: {e}, falling back to rule parser.")
 
-    # 備援規則解析（未提供 Key、網路異常或 API 超時時使用）
-    negations = [r"\bbut\s+not\b", r"\bwithout\b", r"\bexcept\b", r"\bexcluding\b", r"\bnot\b", r"但不要", r"不要", r"沒有", r"排除", r"非", r"除了"]
-    match = re.search(r"|".join(negations), user_input, flags=re.IGNORECASE)
-    coord_pattern = re.compile(r"\(?\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*[,_\s]\s*(-?\d+(?:\.\d+)?)\s*\)?")
-
-    def parse_chunk(s):
-        s = s.strip()
-        m = coord_pattern.search(s)
-        if m:
-            c = [float(m.group(1)), float(m.group(2)), float(m.group(3))]
-            fmt = f"{int(c[0])}_{int(c[1])}_{int(c[2])}"
-            return "location", fmt
-        cleaned = re.sub(r"^[我想要請幫我找查尋\s]+", "", s).strip().lower()
-        return "terms", cleaned
-
-    if match:
-        t_type, target = parse_chunk(user_input[:match.start()])
-        _, exclude = parse_chunk(user_input[match.end():])
-    else:
-        t_type, target = parse_chunk(user_input)
-        exclude = None
-
-    return sanitize_and_lock_output({"type": t_type, "target": target, "exclude": exclude})
+    return fallback_rule_parser(user_input)
 
 # ------------------------------------------------------------------
-# Flask App Factory
+# Flask App
 # ------------------------------------------------------------------
 def create_app():
     app = Flask(__name__)
@@ -165,7 +197,6 @@ def create_app():
     def home():
         return render_template("index.html")
 
-    # 串接 Gemini 語意解析
     @app.get("/parse", endpoint="parse_sentence")
     def parse_sentence():
         q = request.args.get("q", "").strip()
@@ -315,13 +346,13 @@ def create_app():
         """
         return _studies_response(
             ids_sql,
-            {"ax": ax, "ay": ay, "az": az, "bx": bx, "by": by, "bz": bz, "r": r},
+            {"ax": ax, "ay": ay, "az": az, "bx": bx, "by": bz, "r": r},
             {"type": "locations", "in": [ax, ay, az], "not_in": [bx, by, bz], "radius_mm": r},
             fetch_points=True)
 
     @app.get("/version", endpoint="version")
     def version():
-        return "dissociate-v10 (Powered by Google Gemini 2.5 Flash API)"
+        return "dissociate-v11 (Robust Parser with Inverted Sentence Support)"
 
     @app.get("/test_db", endpoint="test_db")
     def test_db():
