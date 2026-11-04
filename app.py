@@ -27,7 +27,7 @@ def get_engine():
     return _engine
 
 # ------------------------------------------------------------------
-# 神經科學詞彙與別名對照表
+# 神經科學詞彙與別名對照表 (本地保底字典)
 # ------------------------------------------------------------------
 SYNONYM_DICT = {
     "vmpfc": "ventromedial prefrontal",
@@ -92,6 +92,7 @@ GEMINI_SYSTEM_INSTRUCTION = """
 1. 正負向識別：
    - 識別所有否定排除語義（包括但不限於：拿掉、濾掉、不需要、別包含、去掉、去除、排除、不要、沒有、非、but not, without, except, excluding, not, minus, ignore, pass掉, 剔除, 扣除, 避開）。
    - 被否定詞修飾的實體歸入 "exclude"，想要保留或主要研究的實體歸入 "target"。
+   - 倒裝句（例：「除了杏仁核之外，我想看後扣帶迴」）中，"target" 是 posterior cingulate，"exclude" 是 amygdala。
 2. 座標規格：
    - MNI 座標轉換為 "x_y_z" 底線格式，此時 "type" 為 "locations"。
 3. 詞彙標準化：
@@ -273,7 +274,7 @@ def create_app():
             "WHERE table_schema = 'ns' AND table_name = 'metadata'"))}
         return "study_id" if "study_id" in cols else "id"
 
-    def _studies_response(ids_sql, params, query_info, fetch_points=False):
+    def _studies_response(ids_sql, params, query_info):
         eng = get_engine()
         try:
             with eng.begin() as conn:
@@ -289,35 +290,19 @@ def create_app():
                     LIMIT :lim
                 """), {**params, "lim": _limit()}).mappings().all()
                 total = conn.execute(text(f"SELECT COUNT(*) FROM ({ids_sql}) t"), params).scalar()
-
-                points = []
-                if fetch_points and rows:
-                    study_ids = [r["study_id"] for r in rows[:100]]
-                    pt_rows = conn.execute(text("""
-                        SELECT ST_X(geom) AS x, ST_Y(geom) AS y, ST_Z(geom) AS z
-                        FROM ns.coordinates
-                        WHERE study_id = ANY(:sids)
-                        LIMIT 500
-                    """), {"sids": study_ids}).fetchall()
-                    points = [[float(r[0]), float(r[1]), float(r[2])] for r in pt_rows]
-
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
 
-        res_payload = {
+        return jsonify({
             "ok": True,
             **query_info,
             "count": total,
             "returned": len(rows),
             "studies": [{"study_id": r["study_id"], "metadata": r["metadata"]} for r in rows],
-        }
-        if fetch_points:
-            res_payload["points"] = points
-        return jsonify(res_payload)
+        })
 
     @app.get("/dissociate/terms/<term_a>/<term_b>", endpoint="dissociate_terms")
     def dissociate_terms(term_a, term_b):
-        # 防呆攔截：若前端誤將座標送到 terms API，自動轉導至 locations
         if re.match(r"^-?\d+(?:\.\d+)?_-?\d+(?:\.\d+)?_-?\d+(?:\.\d+)?$", term_a):
             return dissociate_locations(term_a, term_b)
 
@@ -329,7 +314,6 @@ def create_app():
         prefix = "terms_abstract_tfidf__"
         vars_a = list({clean_a, clean_a.replace(" ", "_"), f"{prefix}{clean_a}", f"{prefix}{clean_a.replace(' ', '_')}"})
         
-        # 單一詞彙查詢
         if clean_b == "none":
             ids_sql = """
                 SELECT DISTINCT a.study_id 
@@ -373,7 +357,6 @@ def create_app():
         
         ax, ay, az = parse(loc_a)
 
-        # 單一座標查詢
         if loc_b.lower() == "none":
             ids_sql = """
                 SELECT DISTINCT study_id FROM ns.coordinates
@@ -382,8 +365,8 @@ def create_app():
             return _studies_response(
                 ids_sql,
                 {"ax": ax, "ay": ay, "az": az, "r": r},
-                {"type": "locations", "in": [ax, ay, az], "not_in": None, "radius_mm": r},
-                fetch_points=True)
+                {"type": "locations", "in": [ax, ay, az], "not_in": None, "radius_mm": r}
+            )
         else:
             bx, by, bz = parse(loc_b)
             ids_sql = """
@@ -396,12 +379,12 @@ def create_app():
             return _studies_response(
                 ids_sql,
                 {"ax": ax, "ay": ay, "az": az, "bx": bx, "by": by, "bz": bz, "r": r},
-                {"type": "locations", "in": [ax, ay, az], "not_in": [bx, by, bz], "radius_mm": r},
-                fetch_points=True)
+                {"type": "locations", "in": [ax, ay, az], "not_in": [bx, by, bz], "radius_mm": r}
+            )
 
     @app.get("/version", endpoint="version")
     def version():
-        return "dissociate-v18 (Single Target Routing & Plotting Fix)"
+        return "dissociate-v19 (Fast Mode - No 3D Rendering)"
 
     @app.get("/test_db", endpoint="test_db")
     def test_db():
