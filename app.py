@@ -25,7 +25,7 @@ def get_engine():
 
 def create_app():
     app = Flask(__name__)
-        @app.get("/terms/search", endpoint="terms_search")
+    @app.get("/terms/search", endpoint="terms_search")
     def terms_search():
         q = request.args.get("q", "").lower()
         eng = get_engine()
