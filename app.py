@@ -25,6 +25,16 @@ def get_engine():
 
 def create_app():
     app = Flask(__name__)
+        @app.get("/terms/search", endpoint="terms_search")
+    def terms_search():
+        q = request.args.get("q", "").lower()
+        eng = get_engine()
+        with eng.begin() as conn:
+            rows = conn.execute(text(
+                "SELECT DISTINCT term FROM ns.annotations_terms "
+                "WHERE term LIKE :p ORDER BY term LIMIT 50"),
+                {"p": f"%{q}%"}).all()
+        return jsonify([r[0] for r in rows])
 
     @app.get("/", endpoint="health")
     def health():
