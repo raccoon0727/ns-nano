@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Neurosynth 功能分離查詢系統</title>
-  <script src="[https://cdn.plot.ly/plotly-2.27.0.min.js](https://cdn.plot.ly/plotly-2.27.0.min.js)"></script>
   <style>
     :root {
       --bg: #000000;
@@ -63,12 +62,6 @@
     }
     button:hover { background: #000000; color: #ffffff; }
     #status { margin-top: 20px; color: var(--text-muted); font-size: 0.9rem; }
-    #plot-container {
-      margin-top: 24px; background: var(--panel); border-radius: 8px;
-      border: 1px solid var(--border); padding: 16px; display: none;
-    }
-    .plot-title { font-size: 0.95rem; font-weight: 600; margin-bottom: 12px; }
-    #plot { width: 100%; height: 500px; }
     .results { margin-top: 24px; }
     .paper-card {
       background: var(--panel); border: 1px solid var(--border);
@@ -86,7 +79,7 @@
 <body>
 <div class="container">
   <h1>Neurosynth 功能分離查詢系統</h1>
-  <p class="desc">輸入腦區名稱或 MNI 座標，系統支援 LLM 語意格式鎖定、即時自動補全與 3D 空間活化點雲檢索。</p>
+  <p class="desc">輸入腦區名稱或 MNI 座標，系統支援 LLM 語意格式鎖定與即時自動補全（極速版）。</p>
 
   <div class="search-box">
     <div class="input-wrapper">
@@ -107,11 +100,6 @@
   </div>
 
   <div id="status"></div>
-
-  <div id="plot-container">
-    <div class="plot-title">3D MNI 腦部真實活化點雲分佈圖</div>
-    <div id="plot"></div>
-  </div>
 
   <div class="results" id="results"></div>
 </div>
@@ -265,11 +253,9 @@
 
     const status = document.getElementById('status');
     const results = document.getElementById('results');
-    const plotContainer = document.getElementById('plot-container');
 
     status.innerText = "正在經由語意解析並檢索資料庫...";
     results.innerHTML = "";
-    plotContainer.style.display = "none";
 
     try {
       const parseRes = await fetch(`/parse?q=${encodeURIComponent(text)}`);
@@ -298,55 +284,6 @@
       }
 
       status.innerText = `找到 ${data.count} 篇符合條件之文獻（顯示前 ${data.returned} 筆）：`;
-
-      if (data.type === "locations" && data.in) {
-        plotContainer.style.display = "block";
-        const traces = [];
-
-        if (data.points && data.points.length > 0) {
-          traces.push({
-            x: data.points.map(p => p[0]),
-            y: data.points.map(p => p[1]),
-            z: data.points.map(p => p[2]),
-            mode: 'markers',
-            name: '文獻活化點雲 (Peaks)',
-            marker: { size: 3, color: '#888888', opacity: 0.4 },
-            type: 'scatter3d'
-          });
-        }
-
-        traces.push({
-          x: [data.in[0]], y: [data.in[1]], z: [data.in[2]],
-          mode: 'markers',
-          name: '目標座標 (A)',
-          marker: { size: 12, color: '#ffffff', symbol: 'circle' },
-          type: 'scatter3d'
-        });
-
-        // 防止繪圖崩潰：只有在有 exclude 項時才繪製排除座標點
-        if (data.not_in) {
-            traces.push({
-              x: [data.not_in[0]], y: [data.not_in[1]], z: [data.not_in[2]],
-              mode: 'markers',
-              name: '排除座標 (B)',
-              marker: { size: 12, color: '#444444', symbol: 'circle-open' },
-              type: 'scatter3d'
-            });
-        }
-
-        const layout = {
-          paper_bgcolor: '#111111',
-          plot_bgcolor: '#111111',
-          scene: {
-            xaxis: { title: 'X (Sagittal)', color: '#888888', gridcolor: '#222222' },
-            yaxis: { title: 'Y (Coronal)', color: '#888888', gridcolor: '#222222' },
-            zaxis: { title: 'Z (Axial)', color: '#888888', gridcolor: '#222222' }
-          },
-          margin: { l: 0, r: 0, b: 0, t: 0 },
-          legend: { font: { color: '#ffffff' } }
-        };
-        Plotly.newPlot('plot', traces, layout);
-      }
 
       let html = "";
       data.studies.forEach(item => {
