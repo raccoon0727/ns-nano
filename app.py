@@ -25,16 +25,6 @@ def get_engine():
 
 def create_app():
     app = Flask(__name__)
-    @app.get("/terms/search", endpoint="terms_search")
-    def terms_search():
-        q = request.args.get("q", "").lower()
-        eng = get_engine()
-        with eng.begin() as conn:
-            rows = conn.execute(text(
-                "SELECT DISTINCT term FROM ns.annotations_terms "
-                "WHERE term LIKE :p ORDER BY term LIMIT 50"),
-                {"p": f"%{q}%"}).all()
-        return jsonify([r[0] for r in rows])
 
     @app.get("/", endpoint="health")
     def health():
@@ -76,7 +66,7 @@ def create_app():
                 key = _metadata_key(conn)
                 rows = conn.execute(text(f"""
                     WITH hits AS ({ids_sql})
-                    SELECT h.study_id,
+                    SELECT DISTINCT ON (h.study_id) h.study_id,
                            (to_jsonb(m) - 'fts') AS metadata
                     FROM hits h
                     LEFT JOIN ns.metadata m ON m.{key}::text = h.study_id
@@ -97,19 +87,11 @@ def create_app():
 
     @app.get("/dissociate/terms/<term_a>/<term_b>", endpoint="dissociate_terms")
     def dissociate_terms(term_a, term_b):
-        """Studies that mention term_a but NOT term_b (A \ B)."""
-        # 轉換為 Neurosynth 的標準格式：底線小寫
-        clean_a = term_a.strip().lower().replace(" ", "_")
-        clean_b = term_b.strip().lower().replace(" ", "_")
-        if not clean_a or not clean_b:
+        """Studies that mention term_a but NOT term_b (A \\ B)."""
+        a = term_a.replace("_", " ").strip().lower()
+        b = term_b.replace("_", " ").strip().lower()
+        if not a or not b:
             abort(400, "both terms are required")
-
-        # 加上 annotations 表固有的特徵前綴
-        prefix = "terms_abstract_tfidf__"
-        full_a = f"{prefix}{clean_a}" if not clean_a.startswith(prefix) else clean_a
-        full_b = f"{prefix}{clean_b}" if not clean_b.startswith(prefix) else clean_b
-
-        # 使用等值比對 (=) 走索引，避免 Full Table Scan 造成 Timeout
         ids_sql = """
             SELECT DISTINCT study_id FROM ns.annotations_terms
             WHERE (term = :a OR right(term, char_length(:a) + 2) = '__' || :a)
@@ -117,11 +99,8 @@ def create_app():
                   SELECT study_id FROM ns.annotations_terms
                   WHERE term = :b OR right(term, char_length(:b) + 2) = '__' || :b)
         """
-        return _studies_response(
-            ids_sql,
-            {"a": full_a, "b": full_b},
-            {"type": "terms", "in": clean_a, "not_in": clean_b}
-        )
+        return _studies_response(ids_sql, {"a": a, "b": b},
+                                 {"type": "terms", "in": a, "not_in": b})
 
     @app.get("/dissociate/locations/<loc_a>/<loc_b>", endpoint="dissociate_locations")
     def dissociate_locations(loc_a, loc_b):
@@ -152,6 +131,19 @@ def create_app():
             ids_sql,
             {"ax": ax, "ay": ay, "az": az, "bx": bx, "by": by, "bz": bz, "r": r},
             {"type": "locations", "in": [ax, ay, az], "not_in": [bx, by, bz], "radius_mm": r})
+
+    @app.get("/version", endpoint="version")
+    def version():
+        return "dissociate-v2 (prefix-aware terms)"
+
+    @app.get("/terms/search", endpoint="terms_search")
+    def terms_search():
+        q = request.args.get("q", "").lower()
+        with get_engine().begin() as conn:
+            rows = conn.execute(text(
+                "SELECT DISTINCT term FROM ns.annotations_terms "
+                "WHERE term LIKE :p ORDER BY term LIMIT 50"), {"p": f"%{q}%"}).all()
+        return jsonify([r[0] for r in rows])
 
     @app.get("/test_db", endpoint="test_db")
     
