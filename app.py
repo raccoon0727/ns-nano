@@ -88,27 +88,31 @@ def create_app():
     @app.get("/dissociate/terms/<term_a>/<term_b>", endpoint="dissociate_terms")
     def dissociate_terms(term_a, term_b):
         """Studies that mention term_a but NOT term_b (A \ B)."""
-        # 去除頭尾空白、轉小寫，並將空格轉為底線
+        # 轉換為 Neurosynth 的標準格式：底線小寫
         clean_a = term_a.strip().lower().replace(" ", "_")
         clean_b = term_b.strip().lower().replace(" ", "_")
         if not clean_a or not clean_b:
             abort(400, "both terms are required")
 
-        # 匹配包含前綴（如 terms_abstract_tfidf__posterior_cingulate）的格式
-        pat_a = f"%{clean_a}%"
-        pat_b = f"%{clean_b}%"
+        # 加上 annotations 表固有的特徵前綴
+        prefix = "terms_abstract_tfidf__"
+        full_a = f"{prefix}{clean_a}" if not clean_a.startswith(prefix) else clean_a
+        full_b = f"{prefix}{clean_b}" if not clean_b.startswith(prefix) else clean_b
 
+        # 使用等值比對 (=) 走索引，避免 Full Table Scan 造成 Timeout
         ids_sql = """
-            SELECT DISTINCT study_id FROM ns.annotations_terms
-            WHERE LOWER(term) LIKE :pat_a
-              AND study_id NOT IN (
-                  SELECT study_id FROM ns.annotations_terms WHERE LOWER(term) LIKE :pat_b
+            SELECT DISTINCT a.study_id 
+            FROM ns.annotations_terms a
+            WHERE a.term = :a
+              AND NOT EXISTS (
+                  SELECT 1 FROM ns.annotations_terms b 
+                  WHERE b.study_id = a.study_id AND b.term = :b
               )
         """
         return _studies_response(
             ids_sql,
-            {"pat_a": pat_a, "pat_b": pat_b},
-            {"type": "terms", "in": term_a, "not_in": term_b}
+            {"a": full_a, "b": full_b},
+            {"type": "terms", "in": clean_a, "not_in": clean_b}
         )
 
     @app.get("/dissociate/locations/<loc_a>/<loc_b>", endpoint="dissociate_locations")
