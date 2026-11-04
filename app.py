@@ -174,30 +174,29 @@ def parse_with_gemini(user_input):
     api_key = os.getenv("GEMINI_API_KEY")
 
     if genai and api_key:
-        candidate_models = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
         client = genai.Client(api_key=api_key)
-
-        for model_name in candidate_models:
-            for retry in range(2):
-                try:
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=user_input,
-                        config=types.GenerateContentConfig(
-                            system_instruction=GEMINI_SYSTEM_INSTRUCTION,
-                            temperature=0.0,
-                            response_mime_type="application/json",
-                        )
+        # 移除陣列輪詢，只專注於呼叫唯一有效模型
+        for retry in range(2):
+            try:
+                response = client.models.generate_content(
+                    model="gemini-3.8-flash",
+                    contents=user_input,
+                    config=types.GenerateContentConfig(
+                        system_instruction=GEMINI_SYSTEM_INSTRUCTION,
+                        temperature=0.0,
+                        response_mime_type="application/json",
                     )
-                    parsed = json.loads(response.text.strip())
-                    return sanitize_and_lock_output(parsed, f"Gemini ({model_name})")
-                except Exception as e:
-                    err_msg = str(e)
-                    print(f"[{model_name} Attempt {retry+1} Failed]: {err_msg}")
-                    if "503" in err_msg or "UNAVAILABLE" in err_msg or "429" in err_msg:
-                        time.sleep(0.5)
-                        continue
-                    break
+                )
+                parsed = json.loads(response.text.strip())
+                return sanitize_and_lock_output(parsed, "Gemini (gemini-3.8-flash)")
+            except Exception as e:
+                err_msg = str(e)
+                print(f"[gemini-3.8-flash Attempt {retry+1} Failed]: {err_msg}")
+                # 遇到 503 塞車或 429 額度耗盡，休眠 0.5 秒後重試一次
+                if "503" in err_msg or "UNAVAILABLE" in err_msg or "429" in err_msg:
+                    time.sleep(0.5)
+                    continue
+                break # 其他非網路層級的錯誤直接跳出，進入本地備援
 
     return robust_rule_fallback(user_input)
 
@@ -384,7 +383,7 @@ def create_app():
 
     @app.get("/version", endpoint="version")
     def version():
-        return "dissociate-v19 (Fast Mode - No 3D Rendering)"
+        return "dissociate-v20 (Clean API & Monster Fallback)"
 
     @app.get("/test_db", endpoint="test_db")
     def test_db():
