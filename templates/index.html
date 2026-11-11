@@ -11,6 +11,9 @@
       --text: #ffffff;
       --text-muted: #888888;
       --border: #2e2e2e;
+      --accent-green: #50fa7b;
+      --accent-red: #ff5555;
+      --accent-blue: #38bdf8;
     }
     body {
       margin: 0; padding: 32px 24px;
@@ -18,8 +21,22 @@
       background: var(--bg); color: var(--text);
       line-height: 1.5;
     }
-    .container { max-width: 900px; margin: 0 auto; }
-    h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 24px; }
+    .container { max-width: 1120px; margin: 0 auto; }
+    .header-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: 12px; margin-bottom: 24px;
+    }
+    h1 { font-size: 1.6rem; font-weight: 700; margin: 0; }
+    .model-selector {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 0.85rem; color: #cccccc;
+      background: var(--panel); padding: 6px 12px;
+      border-radius: 6px; border: 1px solid var(--border);
+    }
+    .model-selector select {
+      background: #000000; color: #ffffff; border: 1px solid var(--border);
+      padding: 4px 8px; border-radius: 4px; font-size: 0.85rem; outline: none;
+    }
     .search-box {
       position: relative; background: var(--panel); padding: 24px;
       border-radius: 8px; border: 1px solid var(--border);
@@ -54,12 +71,67 @@
       border: 1px solid var(--border); font-size: 0.8rem;
     }
     .chip:hover { background: #2a2a2a; color: #ffffff; }
+    .action-row {
+      display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 18px;
+    }
     button {
-      margin-top: 18px; background: #ffffff; color: #000000;
+      background: #ffffff; color: #000000;
       border: 1px solid #ffffff; padding: 10px 20px; border-radius: 6px;
       font-weight: 600; font-size: 0.95rem; cursor: pointer;
     }
     button:hover { background: #000000; color: #ffffff; }
+    button.secondary-btn {
+      background: #1c1c1c; color: #ffffff; border: 1px solid var(--border);
+      font-size: 0.85rem; padding: 9px 14px;
+    }
+    button.secondary-btn:hover { border-color: #ffffff; background: #2a2a2a; }
+
+    /* 三切面平面座標圖與 3D 腦區標示區塊 */
+    .brain-viz-panel {
+      margin-top: 20px; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; padding: 20px;
+    }
+    .viz-header {
+      display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: 10px; margin-bottom: 14px;
+    }
+    .viz-title { font-size: 1.05rem; font-weight: 600; color: #ffffff; }
+    .legend-bar { display: flex; gap: 14px; font-size: 0.8rem; color: #cccccc; flex-wrap: wrap; }
+    .legend-dot {
+      display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle;
+    }
+    .coord-controls {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px; background: #080808; padding: 12px 16px; border-radius: 6px;
+      border: 1px solid var(--border); margin-bottom: 16px;
+    }
+    .coord-slider-group { display: flex; flex-direction: column; gap: 4px; font-size: 0.82rem; }
+    .coord-slider-group label { display: flex; justify-content: space-between; color: #bbbbbb; }
+    .coord-num-input {
+      width: 54px; background: #111; color: var(--accent-blue); border: 1px solid var(--border);
+      border-radius: 4px; text-align: center; font-family: monospace; font-size: 0.82rem;
+    }
+    .slices-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; align-items: stretch;
+    }
+    @media (max-width: 900px) {
+      .slices-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    .slice-card {
+      background: #050505; border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px; display: flex; flex-direction: column; align-items: center;
+    }
+    .slice-card canvas {
+      width: 100%; max-width: 220px; aspect-ratio: 1 / 1; cursor: crosshair; border-radius: 4px;
+    }
+    .slice-label {
+      font-size: 0.78rem; color: var(--text-muted); margin-top: 6px; font-family: monospace;
+    }
+    .atlas-tags {
+      margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    }
+
     #status { margin-top: 20px; color: var(--text-muted); font-size: 0.9rem; }
     .results { margin-top: 24px; }
     .paper-card {
@@ -77,7 +149,19 @@
 </head>
 <body>
 <div class="container">
-  <h1>Neurosynth 功能分離查詢系統</h1>
+  <div class="header-bar">
+    <h1>Neurosynth 功能分離查詢系統</h1>
+    <div class="model-selector">
+      <span>🧠 文字解讀器模型：</span>
+      <select id="engine-select" onchange="triggerParse()">
+        <option value="qwen2.5:7b">Local Model (Ollama: qwen2.5:7b)</option>
+        <option value="llama3.2:latest">Local Model (Ollama: llama3.2)</option>
+        <option value="mistral:latest">Local Model (Ollama: mistral)</option>
+        <option value="gemini">Cloud (Gemini 3.8 Flash)</option>
+        <option value="rule">Local Rule-Atlas Fallback</option>
+      </select>
+    </div>
+  </div>
 
   <div class="search-box">
     <div class="input-wrapper">
@@ -88,13 +172,100 @@
     
     <div class="examples">
       範例查詢：
-      <span class="chip" onclick="setQuery('除了 amygdala 之外，幫我找 dlpfc')">中文倒裝</span>
+      <span class="chip" onclick="setQuery('除了 amygdala 之外，幫我找 dlpfc')">中文倒裝 (A not B)</span>
+      <span class="chip" onclick="setQuery('我想看前扣帶迴但是不要杏仁核')">前扣帶迴 NOT 杏仁核</span>
       <span class="chip" onclick="setQuery('0, -52, 26')">單點查詢</span>
       <span class="chip" onclick="setQuery('給我看 [10, -20, 30] 不要 (-5, 15, 25)')">座標分離</span>
       <span class="chip" onclick="setQuery('對 reward system 很有興趣，但先 pass 掉 OFC')">口語排除</span>
     </div>
 
-    <button onclick="performSearch()">開始查詢</button>
+    <div class="action-row">
+      <button onclick="performSearch()">開始查詢</button>
+      <button type="button" class="secondary-btn" id="swap-ab-btn" onclick="swapANotB()" style="display: none;">
+        ⇄ 切換 A not B / B not A
+      </button>
+      <button type="button" class="secondary-btn" onclick="useCurrentCoordAs('target')">
+        📍 將目前準星座標設為包含 (Target A)
+      </button>
+      <button type="button" class="secondary-btn" onclick="useCurrentCoordAs('exclude')">
+        🚫 將目前準星座標設為排除 (Exclude B)
+      </button>
+    </div>
+  </div>
+
+  <!-- 三種切面 MNI 平面座標對應圖 + 3D 腦區標示圖 -->
+  <div class="brain-viz-panel">
+    <div class="viz-header">
+      <div>
+        <div class="viz-title">MNI 三切面平面座標對應圖 & 3D 腦區立體標示</div>
+        <div id="active-region-label" style="font-size: 0.85rem; color: var(--accent-blue); margin-top: 2px;">
+          目前準星定位：後扣帶迴 (PCC) [0, -52, 26]
+        </div>
+      </div>
+      <div class="legend-bar">
+        <span><i class="legend-dot" style="background: var(--accent-green);"></i>包含腦區/座標 (Target A)</span>
+        <span><i class="legend-dot" style="background: var(--accent-red);"></i>排除腦區/座標 (Exclude B)</span>
+        <span><i class="legend-dot" style="background: #facc15;"></i>文獻活化點 (Study Peaks)</span>
+        <span><i class="legend-dot" style="background: var(--accent-blue);"></i>目前十字準星</span>
+      </div>
+    </div>
+
+    <div class="coord-controls">
+      <div class="coord-slider-group">
+        <label>
+          <span>X 軸 (Sagittal 左右: -90 ~ 90)</span>
+          <input type="number" id="num-x" class="coord-num-input" value="0" min="-90" max="90" onchange="updateCrosshairFromInput()">
+        </label>
+        <input type="range" id="slider-x" min="-90" max="90" value="0" oninput="updateCrosshairFromSlider()">
+      </div>
+      <div class="coord-slider-group">
+        <label>
+          <span>Y 軸 (Coronal 前後: -126 ~ 90)</span>
+          <input type="number" id="num-y" class="coord-num-input" value="-52" min="-126" max="90" onchange="updateCrosshairFromInput()">
+        </label>
+        <input type="range" id="slider-y" min="-126" max="90" value="-52" oninput="updateCrosshairFromSlider()">
+      </div>
+      <div class="coord-slider-group">
+        <label>
+          <span>Z 軸 (Axial 上下: -72 ~ 108)</span>
+          <input type="number" id="num-z" class="coord-num-input" value="26" min="-72" max="108" onchange="updateCrosshairFromInput()">
+        </label>
+        <input type="range" id="slider-z" min="-72" max="108" value="26" oninput="updateCrosshairFromSlider()">
+      </div>
+    </div>
+
+    <div class="slices-grid">
+      <div class="slice-card">
+        <canvas id="canvas-sagittal" width="210" height="210" onclick="handleSliceClick(event, 'sagittal')"></canvas>
+        <div class="slice-label" id="label-sagittal">矢狀面 Sagittal (X = 0)</div>
+      </div>
+      <div class="slice-card">
+        <canvas id="canvas-coronal" width="210" height="210" onclick="handleSliceClick(event, 'coronal')"></canvas>
+        <div class="slice-label" id="label-coronal">冠狀面 Coronal (Y = -52)</div>
+      </div>
+      <div class="slice-card">
+        <canvas id="canvas-axial" width="210" height="210" onclick="handleSliceClick(event, 'axial')"></canvas>
+        <div class="slice-label" id="label-axial">軸狀面 Axial (Z = 26)</div>
+      </div>
+      <div class="slice-card">
+        <canvas id="canvas-3d" width="210" height="210" onclick="handle3DClick(event)"></canvas>
+        <div class="slice-label">3D 立體玻璃腦腦區標示圖</div>
+      </div>
+    </div>
+
+    <div class="atlas-tags">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">3D 腦區快速定位：</span>
+      <span class="chip" onclick="jumpToRegion('amygdala', [-22, -4, -18], '杏仁核 (Amygdala)')">杏仁核 [-22, -4, -18]</span>
+      <span class="chip" onclick="jumpToRegion('anterior cingulate', [0, 28, 24], '前扣帶迴 (ACC)')">前扣帶迴 [0, 28, 24]</span>
+      <span class="chip" onclick="jumpToRegion('posterior cingulate', [0, -52, 26], '後扣帶迴 (PCC)')">後扣帶迴 [0, -52, 26]</span>
+      <span class="chip" onclick="jumpToRegion('dorsolateral prefrontal', [-42, 34, 28], '背外側前額葉 (dlPFC)')">dlPFC [-42, 34, 28]</span>
+      <span class="chip" onclick="jumpToRegion('ventromedial prefrontal', [0, 46, -8], '腹內側前額葉 (vmPFC)')">vmPFC [0, 46, -8]</span>
+      <span class="chip" onclick="jumpToRegion('hippocampus', [-26, -20, -14], '海馬迴 (Hippocampus)')">海馬迴 [-26, -20, -14]</span>
+      <span class="chip" onclick="jumpToRegion('insula', [-36, 14, 0], '島葉 (Insula)')">島葉 [-36, 14, 0]</span>
+      <span class="chip" onclick="jumpToRegion('ventral striatum', [-12, 12, -8], '腹側紋狀體 (Reward)')">腹側紋狀體 [-12, 12, -8]</span>
+      <span class="chip" onclick="jumpToRegion('visual', [0, -84, 6], '視覺皮質 (V1)')">視覺皮質 [0, -84, 6]</span>
+      <span class="chip" onclick="jumpToRegion('motor', [-38, -22, 56], '運動皮質 (M1)')">運動皮質 [-38, -22, 56]</span>
+    </div>
   </div>
 
   <div id="status"></div>
@@ -108,6 +279,31 @@
   const input = document.getElementById('query-input');
   const preview = document.getElementById('preview-box');
   const suggestionsBox = document.getElementById('suggestions');
+  const swapBtn = document.getElementById('swap-ab-btn');
+
+  // 腦圖狀態管理
+  let currentMni = [0, -52, 26];
+  let lastParsedData = null;
+  let targetMarker = null;  // { mni: [x,y,z], label: '...' }
+  let excludeMarker = null; // { mni: [x,y,z], label: '...' }
+  let studyPeaks = [];      // [{x, y, z, study_id}]
+
+  const ATLAS_REGIONS = [
+    { term: 'amygdala', zh: '杏仁核 (Amygdala)', mni: [-22, -4, -18], radius: 14 },
+    { term: 'anterior cingulate', zh: '前扣帶迴 (ACC)', mni: [0, 28, 24], radius: 18 },
+    { term: 'posterior cingulate', zh: '後扣帶迴 (PCC)', mni: [0, -52, 26], radius: 18 },
+    { term: 'dorsolateral prefrontal', zh: '背外側前額葉 (dlPFC)', mni: [-42, 34, 28], radius: 20 },
+    { term: 'ventromedial prefrontal', zh: '腹內側前額葉 (vmPFC)', mni: [0, 46, -8], radius: 18 },
+    { term: 'orbitofrontal', zh: '眼窩前額葉 (OFC)', mni: [0, 38, -16], radius: 16 },
+    { term: 'hippocampus', zh: '海馬迴 (Hippocampus)', mni: [-26, -20, -14], radius: 16 },
+    { term: 'insula', zh: '島葉 (Insula)', mni: [-36, 14, 0], radius: 16 },
+    { term: 'ventral striatum', zh: '腹側紋狀體 (VS)', mni: [-12, 12, -8], radius: 14 },
+    { term: 'thalamus', zh: '視丘 (Thalamus)', mni: [-10, -18, 8], radius: 15 },
+    { term: 'visual', zh: '視覺皮質 (V1)', mni: [0, -84, 6], radius: 22 },
+    { term: 'motor', zh: '運動皮質 (M1)', mni: [-38, -22, 56], radius: 20 },
+    { term: 'supplementary motor', zh: '輔助運動區 (SMA)', mni: [-4, -4, 58], radius: 16 },
+    { term: 'fusiform face', zh: '梭狀迴臉孔區 (FFA)', mni: [40, -52, -18], radius: 16 }
+  ];
 
   function setQuery(text) {
     input.value = text;
@@ -219,25 +415,79 @@
     }
   });
 
+  // 切換 A not B 與 B not A
+  function swapANotB() {
+    if (!lastParsedData || !lastParsedData.target || !lastParsedData.exclude) return;
+    const oldTarget = lastParsedData.target.display;
+    const oldExclude = lastParsedData.exclude.display;
+    input.value = `${oldExclude} but not ${oldTarget}`;
+    triggerParse().then(() => performSearch());
+  }
+
+  // 將目前準星座標填入包含(A)或排除(B)
+  function useCurrentCoordAs(role) {
+    const coordStr = `[${currentMni[0]}, ${currentMni[1]}, ${currentMni[2]}]`;
+    if (role === 'target') {
+      if (lastParsedData && lastParsedData.exclude) {
+        input.value = `給我看 ${coordStr} 不要 ${lastParsedData.exclude.display}`;
+      } else {
+        input.value = coordStr;
+      }
+    } else {
+      const baseTarget = (lastParsedData && lastParsedData.target && lastParsedData.target.display)
+        ? lastParsedData.target.display
+        : '[0, -52, 26]';
+      input.value = `給我看 ${baseTarget} 不要 ${coordStr}`;
+    }
+    triggerParse();
+  }
+
   async function triggerParse() {
     const text = input.value.trim();
+    const engine = document.getElementById('engine-select').value;
     if (!text) {
       preview.innerText = "解析預覽：等待輸入...";
+      swapBtn.style.display = 'none';
       return;
     }
     try {
-      const res = await fetch(`/parse?q=${encodeURIComponent(text)}`);
+      const res = await fetch(`/parse?q=${encodeURIComponent(text)}&engine=${encodeURIComponent(engine)}`);
       const data = await res.json();
       if (data.ok) {
-        let msg = `[${data.engine}] 包含 [${data.target.display}]`;
+        lastParsedData = data;
+        let msg = `[${data.engine}] 包含 A: [${data.target.display}]`;
+        if (data.target.region_zh) {
+          msg += ` (${data.target.region_zh})`;
+        }
         if (data.exclude) {
-          msg += `，排除 [${data.exclude.display}]`;
-        }
-        if (data.engine.includes("Fallback")) {
-            preview.innerHTML = `<span style="color:#ffb86c;">${msg}</span> (Gemini未連通)`;
+          msg += ` ，排除 B: [${data.exclude.display}]`;
+          if (data.exclude.region_zh) {
+            msg += ` (${data.exclude.region_zh})`;
+          }
+          swapBtn.style.display = 'inline-block';
         } else {
-            preview.innerHTML = `<span style="color:#50fa7b;">${msg}</span>`;
+          swapBtn.style.display = 'none';
         }
+
+        if (data.engine.includes("Fallback")) {
+          preview.innerHTML = `<span style="color:#ffb86c;">${msg}</span>`;
+        } else {
+          preview.innerHTML = `<span style="color:#50fa7b;">${msg}</span>`;
+        }
+
+        // 更新三切面與 3D 腦區標記
+        if (data.target && data.target.mni) {
+          targetMarker = { mni: data.target.mni, label: data.target.region_zh || data.target.display };
+          setCrosshair(data.target.mni);
+        } else {
+          targetMarker = null;
+        }
+        if (data.exclude && data.exclude.mni) {
+          excludeMarker = { mni: data.exclude.mni, label: data.exclude.region_zh || data.exclude.display };
+        } else {
+          excludeMarker = null;
+        }
+        renderAllViews();
       }
     } catch(e) {
       console.error(e);
@@ -247,6 +497,7 @@
   async function performSearch() {
     hideSuggestions();
     const text = input.value.trim();
+    const engine = document.getElementById('engine-select').value;
     if (!text) return;
 
     const status = document.getElementById('status');
@@ -256,12 +507,13 @@
     results.innerHTML = "";
 
     try {
-      const parseRes = await fetch(`/parse?q=${encodeURIComponent(text)}`);
+      const parseRes = await fetch(`/parse?q=${encodeURIComponent(text)}&engine=${encodeURIComponent(engine)}`);
       const parsed = await parseRes.json();
       if (!parsed.ok || !parsed.target) {
         status.innerText = "無法解析輸入格式，請檢視輸入語句。";
         return;
       }
+      lastParsedData = parsed;
 
       let apiUrl = "";
       const targetVal = parsed.target.val;
@@ -281,7 +533,11 @@
         return;
       }
 
-      status.innerText = `找到 ${data.count} 篇符合條件之文獻（顯示前 ${data.returned} 筆）：`;
+      // 接收文獻活化座標點並繪製於三切面圖上
+      studyPeaks = data.peaks || [];
+      renderAllViews();
+
+      status.innerText = `找到 ${data.count} 篇符合條件之文獻（顯示前 ${data.returned} 筆，已同步標示 ${studyPeaks.length} 個腦區活化座標點）：`;
 
       let html = "";
       data.studies.forEach(item => {
@@ -297,7 +553,7 @@
             <div class="paper-title">${title}</div>
             <div class="paper-meta">${authors} (${year}) - <em>${journal}</em></div>
             <div>
-              <a class="pubmed-link" href="https://pubmed.ncbi.nlm.nih.gov/${studyId}/" target="_blank" rel="noopener">
+              <a class="pubmed-link" href="[https://pubmed.ncbi.nlm.nih.gov/$](https://pubmed.ncbi.nlm.nih.gov/$){studyId}/" target="_blank" rel="noopener">
                 查看 PubMed 文獻 (ID: ${studyId})
               </a>
             </div>
@@ -311,6 +567,345 @@
       console.error(err);
     }
   }
+
+  // =========================================================================
+  // MNI 三種切面平面座標對應圖 (Sagittal, Coronal, Axial) & 3D 腦區標示繪圖引擎
+  // =========================================================================
+  function findClosestAtlasRegion([x, y, z]) {
+    let best = null;
+    let minD = Infinity;
+    for (const reg of ATLAS_REGIONS) {
+      const [rx, ry, rz] = reg.mni;
+      const d = Math.sqrt((x - rx) ** 2 + (y - ry) ** 2 + (z - rz) ** 2);
+      if (d < minD) {
+        minD = d;
+        best = { ...reg, dist: Math.round(d) };
+      }
+    }
+    return best && best.dist <= 26 ? best : null;
+  }
+
+  function setCrosshair([x, y, z]) {
+    const cx = Math.max(-90, Math.min(90, Math.round(x)));
+    const cy = Math.max(-126, Math.min(90, Math.round(y)));
+    const cz = Math.max(-72, Math.min(108, Math.round(z)));
+    currentMni = [cx, cy, cz];
+
+    document.getElementById('num-x').value = cx;
+    document.getElementById('num-y').value = cy;
+    document.getElementById('num-z').value = cz;
+    document.getElementById('slider-x').value = cx;
+    document.getElementById('slider-y').value = cy;
+    document.getElementById('slider-z').value = cz;
+
+    document.getElementById('label-sagittal').innerText = `矢狀面 Sagittal (X = ${cx})`;
+    document.getElementById('label-coronal').innerText = `冠狀面 Coronal (Y = ${cy})`;
+    document.getElementById('label-axial').innerText = `軸狀面 Axial (Z = ${cz})`;
+
+    const matched = findClosestAtlasRegion(currentMni);
+    const labelEl = document.getElementById('active-region-label');
+    if (matched) {
+      labelEl.innerText = `目前準星定位：${matched.zh} [${cx}, ${cy}, ${cz}] (距中心 ${matched.dist} mm)`;
+    } else {
+      labelEl.innerText = `目前準星定位：MNI 座標 [${cx}, ${cy}, ${cz}]`;
+    }
+    renderAllViews();
+  }
+
+  function updateCrosshairFromSlider() {
+    const x = Number(document.getElementById('slider-x').value);
+    const y = Number(document.getElementById('slider-y').value);
+    const z = Number(document.getElementById('slider-z').value);
+    setCrosshair([x, y, z]);
+  }
+
+  function updateCrosshairFromInput() {
+    const x = Number(document.getElementById('num-x').value);
+    const y = Number(document.getElementById('num-y').value);
+    const z = Number(document.getElementById('num-z').value);
+    setCrosshair([x, y, z]);
+  }
+
+  function jumpToRegion(term, coords, zhName) {
+    setCrosshair(coords);
+  }
+
+  function mniToSlicePx(plane, [x, y, z], W, H) {
+    if (plane === 'sagittal') {
+      return [((y + 126) / 216) * W, ((108 - z) / 180) * H];
+    } else if (plane === 'coronal') {
+      return [((x + 90) / 180) * W, ((108 - z) / 180) * H];
+    } else {
+      return [((x + 90) / 180) * W, ((90 - y) / 216) * H];
+    }
+  }
+
+  function handleSliceClick(event, plane) {
+    const canvas = event.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    const rx = (event.clientX - rect.left) / rect.width;
+    const ry = (event.clientY - rect.top) / rect.height;
+
+    let [nx, ny, nz] = [...currentMni];
+    if (plane === 'sagittal') {
+      ny = rx * 216 - 126;
+      nz = 108 - ry * 180;
+    } else if (plane === 'coronal') {
+      nx = rx * 180 - 90;
+      nz = 108 - ry * 180;
+    } else if (plane === 'axial') {
+      nx = rx * 180 - 90;
+      ny = 90 - ry * 216;
+    }
+    setCrosshair([nx, ny, nz]);
+  }
+
+  function draw2DSlice(canvasId, plane) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(0, 0, W, H);
+
+    // 繪製解剖腦切面模擬輪廓與灰白質結構
+    ctx.save();
+    ctx.translate(W / 2, H / 2);
+    ctx.fillStyle = '#1e242b';
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = 2;
+
+    if (plane === 'sagittal') {
+      ctx.beginPath();
+      ctx.ellipse(4, -8, W * 0.38, H * 0.33, -0.05, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // 小腦與腦幹
+      ctx.fillStyle = '#252d38';
+      ctx.beginPath();
+      ctx.ellipse(-W * 0.16, H * 0.21, W * 0.13, H * 0.11, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // 胼胝體弧線
+      ctx.strokeStyle = '#64748b';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(4, -4, W * 0.16, Math.PI * 1.12, Math.PI * 1.88);
+      ctx.stroke();
+    } else if (plane === 'coronal') {
+      ctx.beginPath();
+      ctx.ellipse(-W * 0.16, -2, W * 0.2, H * 0.35, 0, 0, Math.PI * 2);
+      ctx.ellipse(W * 0.16, -2, W * 0.2, H * 0.35, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // 側腦室
+      ctx.fillStyle = '#090b0e';
+      ctx.beginPath();
+      ctx.ellipse(-W * 0.05, -H * 0.04, 6, 13, 0.2, 0, Math.PI * 2);
+      ctx.ellipse(W * 0.05, -H * 0.04, 6, 13, -0.2, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.ellipse(-W * 0.15, 0, W * 0.19, H * 0.39, 0, 0, Math.PI * 2);
+      ctx.ellipse(W * 0.15, 0, W * 0.19, H * 0.39, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // 大腦縱裂
+      ctx.strokeStyle = '#090b0e';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, -H * 0.39);
+      ctx.lineTo(0, H * 0.39);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // 繪製檢索出的文獻活化點 (黃色點)
+    studyPeaks.forEach(pt => {
+      const inSlice =
+        (plane === 'sagittal' && Math.abs(pt.x - currentMni[0]) <= 12) ||
+        (plane === 'coronal' && Math.abs(pt.y - currentMni[1]) <= 12) ||
+        (plane === 'axial' && Math.abs(pt.z - currentMni[2]) <= 12);
+      if (inSlice) {
+        const [px, py] = mniToSlicePx(plane, [pt.x, pt.y, pt.z], W, H);
+        ctx.fillStyle = 'rgba(250, 204, 21, 0.78)';
+        ctx.beginPath();
+        ctx.arc(px, py, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+
+    // 繪製 Exclude B 排除腦區標記 (紅色圓圈 + 叉號)
+    if (excludeMarker && excludeMarker.mni) {
+      const [ex, ey, ez] = excludeMarker.mni;
+      const [px, py] = mniToSlicePx(plane, [ex, ey, ez], W, H);
+      ctx.fillStyle = 'rgba(255, 85, 85, 0.25)';
+      ctx.strokeStyle = '#ff5555';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(px, py, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // 繪製 Target A 包含腦區標記 (綠色光暈圓圈)
+    if (targetMarker && targetMarker.mni) {
+      const [tx, ty, tz] = targetMarker.mni;
+      const [px, py] = mniToSlicePx(plane, [tx, ty, tz], W, H);
+      ctx.fillStyle = 'rgba(80, 250, 123, 0.28)';
+      ctx.strokeStyle = '#50fa7b';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(px, py, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // 繪製十字準星
+    const [cx, cy] = mniToSlicePx(plane, currentMni, W, H);
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(cx, 0); ctx.lineTo(cx, H);
+    ctx.moveTo(0, cy); ctx.lineTo(W, cy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 方位標示
+    ctx.fillStyle = '#777777';
+    ctx.font = '10px monospace';
+    if (plane === 'sagittal') {
+      ctx.fillText('P', 6, H / 2);
+      ctx.fillText('A', W - 12, H / 2);
+    } else if (plane === 'coronal') {
+      ctx.fillText('L', 6, H / 2);
+      ctx.fillText('R', W - 12, H / 2);
+    } else {
+      ctx.fillText('A', W / 2 - 4, 12);
+      ctx.fillText('P', W / 2 - 4, H - 6);
+    }
+  }
+
+  // 繪製第 4 格：3D 立體玻璃腦腦區標示圖
+  function draw3DBrain() {
+    const canvas = document.getElementById('canvas-3d');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(0, 0, W, H);
+
+    // 3D 立體透視玻璃腦輪廓
+    ctx.save();
+    ctx.strokeStyle = '#3b4859';
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.05)';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.ellipse(W * 0.5, H * 0.47, W * 0.4, H * 0.33, -0.06, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // 立體經緯網格線
+    ctx.strokeStyle = 'rgba(100, 116, 139, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.ellipse(W * 0.5, H * 0.47, W * 0.4, H * 0.12, -0.06, 0, Math.PI * 2);
+    ctx.ellipse(W * 0.5, H * 0.47, W * 0.15, H * 0.33, -0.06, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+
+    const project3D = ([x, y, z]) => {
+      const px = W * 0.5 + y * 0.62 + x * 0.18;
+      const py = H * 0.52 - z * 0.65 - x * 0.08;
+      return [px, py];
+    };
+
+    // 繪製所有預設 3D 腦區節點
+    ATLAS_REGIONS.forEach(reg => {
+      const [px, py] = project3D(reg.mni);
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.45)';
+      ctx.beginPath();
+      ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // 標示 Exclude B (紅點)
+    if (excludeMarker && excludeMarker.mni) {
+      const [px, py] = project3D(excludeMarker.mni);
+      ctx.fillStyle = '#ff5555';
+      ctx.beginPath();
+      ctx.arc(px, py, 6.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ff9999';
+      ctx.font = '10px sans-serif';
+      ctx.fillText('Exclude B', Math.min(W - 55, px + 8), py + 3);
+    }
+
+    // 標示 Target A (綠點)
+    if (targetMarker && targetMarker.mni) {
+      const [px, py] = project3D(targetMarker.mni);
+      ctx.fillStyle = '#50fa7b';
+      ctx.beginPath();
+      ctx.arc(px, py, 6.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#50fa7b';
+      ctx.font = '10px sans-serif';
+      ctx.fillText('Target A', Math.min(W - 52, px + 8), py - 5);
+    }
+
+    // 標示目前 3D 十字準星位置
+    const [curX, curY] = project3D(currentMni);
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(curX, curY, 5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  function handle3DClick(event) {
+    const canvas = event.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    const clickX = ((event.clientX - rect.left) / rect.width) * canvas.width;
+    const clickY = ((event.clientY - rect.top) / rect.height) * canvas.height;
+    const W = canvas.width;
+    const H = canvas.height;
+
+    let closest = null;
+    let minDist = 999;
+    ATLAS_REGIONS.forEach(reg => {
+      const px = W * 0.5 + reg.mni[1] * 0.62 + reg.mni[0] * 0.18;
+      const py = H * 0.52 - reg.mni[2] * 0.65 - reg.mni[0] * 0.08;
+      const d = Math.hypot(clickX - px, clickY - py);
+      if (d < minDist) {
+        minDist = d;
+        closest = reg;
+      }
+    });
+    if (closest && minDist <= 25) {
+      setCrosshair(closest.mni);
+    }
+  }
+
+  function renderAllViews() {
+    draw2DSlice('canvas-sagittal', 'sagittal');
+    draw2DSlice('canvas-coronal', 'coronal');
+    draw2DSlice('canvas-axial', 'axial');
+    draw3DBrain();
+  }
+
+  // 初始化繪製
+  setCrosshair([0, -52, 26]);
 </script>
 </body>
 </html>
