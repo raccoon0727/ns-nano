@@ -22,21 +22,7 @@
       line-height: 1.5;
     }
     .container { max-width: 1120px; margin: 0 auto; }
-    .header-bar {
-      display: flex; justify-content: space-between; align-items: center;
-      flex-wrap: wrap; gap: 12px; margin-bottom: 24px;
-    }
-    h1 { font-size: 1.6rem; font-weight: 700; margin: 0; }
-    .model-selector {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 0.85rem; color: #cccccc;
-      background: var(--panel); padding: 6px 12px;
-      border-radius: 6px; border: 1px solid var(--border);
-    }
-    .model-selector select {
-      background: #000000; color: #ffffff; border: 1px solid var(--border);
-      padding: 4px 8px; border-radius: 4px; font-size: 0.85rem; outline: none;
-    }
+    h1 { font-size: 1.6rem; font-weight: 700; margin: 0 0 24px 0; }
     .search-box {
       position: relative; background: var(--panel); padding: 24px;
       border-radius: 8px; border: 1px solid var(--border);
@@ -149,19 +135,7 @@
 </head>
 <body>
 <div class="container">
-  <div class="header-bar">
-    <h1>Neurosynth 功能分離查詢系統</h1>
-    <div class="model-selector">
-      <span>🧠 文字解讀器模型：</span>
-      <select id="engine-select" onchange="triggerParse()">
-        <option value="qwen2.5:7b">Local Model (Ollama: qwen2.5:7b)</option>
-        <option value="llama3.2:latest">Local Model (Ollama: llama3.2)</option>
-        <option value="mistral:latest">Local Model (Ollama: mistral)</option>
-        <option value="gemini">Cloud (Gemini 3.8 Flash)</option>
-        <option value="rule">Local Rule-Atlas Fallback</option>
-      </select>
-    </div>
-  </div>
+  <h1>Neurosynth 功能分離查詢系統</h1>
 
   <div class="search-box">
     <div class="input-wrapper">
@@ -444,23 +418,22 @@
 
   async function triggerParse() {
     const text = input.value.trim();
-    const engine = document.getElementById('engine-select').value;
     if (!text) {
       preview.innerText = "解析預覽：等待輸入...";
       swapBtn.style.display = 'none';
       return;
     }
     try {
-      const res = await fetch(`/parse?q=${encodeURIComponent(text)}&engine=${encodeURIComponent(engine)}`);
+      const res = await fetch(`/parse?q=${encodeURIComponent(text)}`);
       const data = await res.json();
       if (data.ok) {
         lastParsedData = data;
-        let msg = `[${data.engine}] 包含 A: [${data.target.display}]`;
+        let msg = `[${data.engine}] 包含 [${data.target.display}]`;
         if (data.target.region_zh) {
           msg += ` (${data.target.region_zh})`;
         }
         if (data.exclude) {
-          msg += ` ，排除 B: [${data.exclude.display}]`;
+          msg += `，排除 [${data.exclude.display}]`;
           if (data.exclude.region_zh) {
             msg += ` (${data.exclude.region_zh})`;
           }
@@ -470,7 +443,7 @@
         }
 
         if (data.engine.includes("Fallback")) {
-          preview.innerHTML = `<span style="color:#ffb86c;">${msg}</span>`;
+          preview.innerHTML = `<span style="color:#ffb86c;">${msg}</span> (Local Model 未連通)`;
         } else {
           preview.innerHTML = `<span style="color:#50fa7b;">${msg}</span>`;
         }
@@ -497,7 +470,6 @@
   async function performSearch() {
     hideSuggestions();
     const text = input.value.trim();
-    const engine = document.getElementById('engine-select').value;
     if (!text) return;
 
     const status = document.getElementById('status');
@@ -507,7 +479,7 @@
     results.innerHTML = "";
 
     try {
-      const parseRes = await fetch(`/parse?q=${encodeURIComponent(text)}&engine=${encodeURIComponent(engine)}`);
+      const parseRes = await fetch(`/parse?q=${encodeURIComponent(text)}`);
       const parsed = await parseRes.json();
       if (!parsed.ok || !parsed.target) {
         status.innerText = "無法解析輸入格式，請檢視輸入語句。";
@@ -683,12 +655,10 @@
       ctx.ellipse(4, -8, W * 0.38, H * 0.33, -0.05, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      // 小腦與腦幹
       ctx.fillStyle = '#252d38';
       ctx.beginPath();
       ctx.ellipse(-W * 0.16, H * 0.21, W * 0.13, H * 0.11, 0, 0, Math.PI * 2);
       ctx.fill();
-      // 胼胝體弧線
       ctx.strokeStyle = '#64748b';
       ctx.lineWidth = 4;
       ctx.beginPath();
@@ -700,7 +670,6 @@
       ctx.ellipse(W * 0.16, -2, W * 0.2, H * 0.35, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      // 側腦室
       ctx.fillStyle = '#090b0e';
       ctx.beginPath();
       ctx.ellipse(-W * 0.05, -H * 0.04, 6, 13, 0.2, 0, Math.PI * 2);
@@ -712,7 +681,6 @@
       ctx.ellipse(W * 0.15, 0, W * 0.19, H * 0.39, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      // 大腦縱裂
       ctx.strokeStyle = '#090b0e';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -737,7 +705,7 @@
       }
     });
 
-    // 繪製 Exclude B 排除腦區標記 (紅色圓圈 + 叉號)
+    // 繪製 Exclude B 排除腦區標記 (紅色圓圈)
     if (excludeMarker && excludeMarker.mni) {
       const [ex, ey, ez] = excludeMarker.mni;
       const [px, py] = mniToSlicePx(plane, [ex, ey, ez], W, H);
@@ -750,7 +718,7 @@
       ctx.stroke();
     }
 
-    // 繪製 Target A 包含腦區標記 (綠色光暈圓圈)
+    // 繪製 Target A 包含腦區標記 (綠色圓圈)
     if (targetMarker && targetMarker.mni) {
       const [tx, ty, tz] = targetMarker.mni;
       const [px, py] = mniToSlicePx(plane, [tx, ty, tz], W, H);
