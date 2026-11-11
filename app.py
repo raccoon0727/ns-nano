@@ -23,7 +23,7 @@ def get_engine():
     return _engine
 
 # ------------------------------------------------------------------
-# Local Model 設定 (對接 http://localhost:1234/v1 - Gemma 3 4B Instruct QAT)
+# Local Model 設定 (若在 Render 設定 LOCAL_API_BASE 為 ngrok/tunnel 網址亦可由後端直連)
 # ------------------------------------------------------------------
 LOCAL_API_BASE = os.getenv("LOCAL_API_BASE", "http://localhost:1234/v1")
 LOCAL_MODEL_ID = os.getenv("LOCAL_MODEL_ID", "gemma-3-4b-it-qat")
@@ -197,6 +197,10 @@ def sanitize_and_lock_output(data, engine="Rule Fallback"):
         if exclude_val in ["", "none", "null"]:
             exclude_val = None
 
+    # 自動偵測若 target 是座標格式則轉為 locations
+    if re.match(r"^-?\d+(?:\.\d+)?[,_\s]+-?\d+(?:\.\d+)?[,_\s]+-?\d+(?:\.\d+)?$", target_val):
+        q_type = "locations"
+
     if q_type == "locations":
         target_val = re.sub(r"[()\[\],\s]+", "_", target_val).strip("_")
         if exclude_val:
@@ -265,19 +269,22 @@ def robust_rule_fallback(text_input):
 
     return sanitize_and_lock_output({"type": t_type, "target": target_str, "exclude": exclude_str}, "Rule Fallback")
 
-# ------------------------------------------------------------------
-# Local Model 解讀器：呼叫 http://localhost:1234/v1 (Gemma 3 4B Instruct QAT)
-# ------------------------------------------------------------------
 def parse_with_local_gemma(user_input):
-    endpoint = f"{LOCAL_API_BASE.rstrip('/')}/chat/completions"
+    base_url = LOCAL_API_BASE.rstrip("/")
+    # 若在 Render 雲端環境且未設定外部 Tunnel，直接快速退回 Rule Fallback (交由前端瀏覽器直連本機 localhost:1234)
+    if os.getenv("RENDER") and ("localhost" in base_url or "127.0.0.1" in base_url):
+        return robust_rule_fallback(user_input)
+
+    combined_prompt = f"{SYSTEM_INSTRUCTION}\n\n請解析以下這句話並只輸出 JSON：\n「{user_input}」"
+    endpoint = f"{base_url}/chat/completions"
     payload = json.dumps({
         "model": LOCAL_MODEL_ID,
         "messages": [
-            {"role": "system", "content": SYSTEM_INSTRUCTION},
-            {"role": "user", "content": user_input}
+            {"role": "user", "content": combined_prompt}
         ],
         "temperature": 0.0,
-        "max_tokens": 256
+        "max_tokens": 256,
+        "stream": False
     }).encode("utf-8")
 
     try:
@@ -287,13 +294,11 @@ def parse_with_local_gemma(user_input):
             headers={"Content-Type": "application/json"},
             method="POST"
         )
-        with urllib.request.urlopen(req, timeout=5.0) as resp:
+        with urllib.request.urlopen(req, timeout=8.0) as resp:
             res_body = json.loads(resp.read().decode("utf-8"))
             content = res_body["choices"][0]["message"]["content"].strip()
-            # 清除模型可能夾帶的 ```json 與 ``` 標記
             content = re.sub(r"^```(?:json)?\s*", "", content, flags=re.IGNORECASE)
             content = re.sub(r"\s*```$", "", content)
-            # 擷取第一個完整的 {...} JSON 區塊
             json_match = re.search(r"\{.*\}", content, flags=re.DOTALL)
             if json_match:
                 content = json_match.group(0)
@@ -301,7 +306,7 @@ def parse_with_local_gemma(user_input):
             if parsed.get("target"):
                 return sanitize_and_lock_output(parsed, "Gemma 3 4B Instruct QAT")
     except Exception as e:
-        print(f"[Local Gemma 3 4B QAT Failed -> Using Rule Fallback]: {e}")
+        print(f"[Backend Local Model Fallback]: {e}")
 
     return robust_rule_fallback(user_input)
 
@@ -314,6 +319,8 @@ def create_app():
     @app.after_request
     def add_cors_headers(resp):
         resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         return resp
 
     @app.get("/", endpoint="home")
@@ -326,6 +333,17 @@ def create_app():
         if not q:
             return jsonify({"ok": False, "error": "query is empty"}), 400
         return jsonify(parse_with_local_gemma(q))
+
+    @app.post("/Lock_local_llm", endpoint="lock_local_llm")
+    def lock_local_llm():
+        """接收前端瀏覽器直連本機 http://localhost:1234/v1 (Gemma 3 4B QAT) 解讀出的 JSON，進行詞彙標準化與 MNI 座標綁定"""
+        data = request.get_json(silent=True) or {}
+        raw_parsed = data.get("parsed", {})
+        model_name = data.get("model", "Gemma 3 4B Instruct QAT")
+        if not raw_parsed or not raw_parsed.get("target"):
+            q_text = data.get("q", "")
+            return jsonify(robust_rule_fallback(q_text))
+        return jsonify(sanitize_and_lock_output(raw_parsed, model_name))
 
     @app.get("/atlas", endpoint="get_atlas")
     def get_atlas():
@@ -514,7 +532,7 @@ def create_app():
 
     @app.get("/version", endpoint="version")
     def version():
-        return "dissociate-v22 (Gemma 3 4B Instruct QAT @ localhost:1234/v1)"
+        return "dissociate-v23 (Render Cloud + Browser-Direct Local Gemma 3 4B QAT)"
 
     @app.get("/test_db", endpoint="test_db")
     def test_db():
