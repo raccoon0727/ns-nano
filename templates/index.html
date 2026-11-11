@@ -298,7 +298,6 @@
   // 瀏覽器端直接呼叫本機 http://localhost:1234/v1 (Gemma 3 4B Instruct QAT)
   async function parseQuerySmart(text) {
     try {
-      // 1. 先由瀏覽器直連使用者本機的 LM Studio (1234 port)
       const lmResp = await fetch(`${LOCAL_LM_STUDIO_BASE}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -321,20 +320,18 @@
         if (match) rawContent = match[0];
         const parsedObj = JSON.parse(rawContent);
 
-        // 送交 Render 後端進行詞彙標準化與 MNI 座標鎖定
         const lockResp = await fetch('/Lock_local_llm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             q: text,
             parsed: parsedObj,
-            model: 'Gemma 3 4B Instruct QAT (localhost:1234)'
+            model: 'Gemma 3 4B Instruct QAT'
           })
         });
         return await lockResp.json();
       }
     } catch (err) {
-      // 若本機未開 LM Studio 或未開 CORS，自動無縫退回後端 /parse
       console.warn('本機 localhost:1234 未回應或未開啟 CORS，切換至後端解析:', err);
     }
 
@@ -490,7 +487,8 @@
       const data = await parseQuerySmart(text);
       if (data.ok) {
         lastParsedData = data;
-        let msg = `[${data.engine}] 包含 [${data.target.display}]`;
+        // 已移除模型名稱前綴，只顯示純粹的包含與排除結果
+        let msg = `包含 [${data.target.display}]`;
         if (data.target.region_zh) {
           msg += ` (${data.target.region_zh})`;
         }
@@ -504,8 +502,8 @@
           swapBtn.style.display = 'none';
         }
 
-        if (data.engine.includes("Fallback")) {
-          preview.innerHTML = `<span style="color:#ffb86c;">${msg}</span> (請確認 LM Studio 已開啟 CORS 與 1234 Port)`;
+        if (data.engine && data.engine.includes("Fallback")) {
+          preview.innerHTML = `<span style="color:#ffb86c;">${msg}</span>`;
         } else {
           preview.innerHTML = `<span style="color:#50fa7b;">${msg}</span>`;
         }
@@ -536,7 +534,7 @@
     const status = document.getElementById('status');
     const results = document.getElementById('results');
 
-    status.innerText = "正在經由 Gemma 3 4B QAT 語意解析並檢索資料庫...";
+    status.innerText = "正在經由語意解析並檢索資料庫...";
     results.innerHTML = "";
 
     try {
@@ -584,7 +582,7 @@
             <div class="paper-title">${title}</div>
             <div class="paper-meta">${authors} (${year}) - <em>${journal}</em></div>
             <div>
-              <a class="pubmed-link" href="[https://pubmed.ncbi.nlm.nih.gov/$](https://pubmed.ncbi.nlm.nih.gov/$){studyId}/" target="_blank" rel="noopener">
+              <a class="pubmed-link" href="https://pubmed.ncbi.nlm.nih.gov/${studyId}/" target="_blank" rel="noopener">
                 查看 PubMed 文獻 (ID: ${studyId})
               </a>
             </div>
