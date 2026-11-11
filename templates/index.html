@@ -255,12 +255,28 @@
   const suggestionsBox = document.getElementById('suggestions');
   const swapBtn = document.getElementById('swap-ab-btn');
 
+  // 本機 LM Studio 設定 (由瀏覽器直接呼叫本機 1234 port，繞過 Render 雲端隔離限制)
+  const LOCAL_LM_STUDIO_BASE = "http://localhost:1234/v1";
+  const LOCAL_GEMMA_MODEL = "gemma-3-4b-it-qat";
+
+  const GEMMA_PROMPT_INSTRUCTION = `你是一個專精於神經科學資料庫 Neurosynth 的嚴格語意解析器。
+請將使用者的輸入轉換為純 JSON 物件（嚴禁包含 \`\`\`json 等標記）：
+{
+  "type": "terms" 或 "locations",
+  "target": "要包含的英文小寫腦區詞彙或 x_y_z 座標",
+  "exclude": "要排除的英文小寫腦區詞彙或 x_y_z 座標，若無則為 null"
+}
+規則：
+1. 識別所有否定排除詞（不要、排除、除了...之外、pass掉、拿掉、but not, without, except, not），將被排除的實體放入 "exclude"，要保留的放入 "target"。
+2. 中文腦區請翻譯為英文小寫（如：前扣帶迴 -> anterior cingulate, 後扣帶迴 -> posterior cingulate, 杏仁核 -> amygdala, 背外側前額葉/dlpfc -> dorsolateral prefrontal, 腹內側前額葉/vmpfc -> ventromedial prefrontal, 眼窩前額葉/ofc -> orbitofrontal, 海馬迴 -> hippocampus, 島葉 -> insula, 獎勵系統 -> reward）。
+3. 若為座標請轉為 "x_y_z" 格式且 "type" 設為 "locations"。`;
+
   // 腦圖狀態管理
   let currentMni = [0, -52, 26];
   let lastParsedData = null;
-  let targetMarker = null;  // { mni: [x,y,z], label: '...' }
-  let excludeMarker = null; // { mni: [x,y,z], label: '...' }
-  let studyPeaks = [];      // [{x, y, z, study_id}]
+  let targetMarker = null;
+  let excludeMarker = null;
+  let studyPeaks = [];
 
   const ATLAS_REGIONS = [
     { term: 'amygdala', zh: '杏仁核 (Amygdala)', mni: [-22, -4, -18], radius: 14 },
@@ -278,6 +294,53 @@
     { term: 'supplementary motor', zh: '輔助運動區 (SMA)', mni: [-4, -4, 58], radius: 16 },
     { term: 'fusiform face', zh: '梭狀迴臉孔區 (FFA)', mni: [40, -52, -18], radius: 16 }
   ];
+
+  // 瀏覽器端直接呼叫本機 http://localhost:1234/v1 (Gemma 3 4B Instruct QAT)
+  async function parseQuerySmart(text) {
+    try {
+      // 1. 先由瀏覽器直連使用者本機的 LM Studio (1234 port)
+      const lmResp = await fetch(`${LOCAL_LM_STUDIO_BASE}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: LOCAL_GEMMA_MODEL,
+          messages: [
+            { role: 'user', content: `${GEMMA_PROMPT_INSTRUCTION}\n\n使用者輸入：「${text}」\n請只輸出 JSON：` }
+          ],
+          temperature: 0.0,
+          max_tokens: 200,
+          stream: false
+        })
+      });
+
+      if (lmResp.ok) {
+        const lmJson = await lmResp.json();
+        let rawContent = lmJson.choices[0].message.content.trim();
+        rawContent = rawContent.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+        const match = rawContent.match(/\{[\s\S]*\}/);
+        if (match) rawContent = match[0];
+        const parsedObj = JSON.parse(rawContent);
+
+        // 送交 Render 後端進行詞彙標準化與 MNI 座標鎖定
+        const lockResp = await fetch('/Lock_local_llm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            q: text,
+            parsed: parsedObj,
+            model: 'Gemma 3 4B Instruct QAT (localhost:1234)'
+          })
+        });
+        return await lockResp.json();
+      }
+    } catch (err) {
+      // 若本機未開 LM Studio 或未開 CORS，自動無縫退回後端 /parse
+      console.warn('本機 localhost:1234 未回應或未開啟 CORS，切換至後端解析:', err);
+    }
+
+    const fallbackRes = await fetch(`/parse?q=${encodeURIComponent(text)}`);
+    return await fallbackRes.json();
+  }
 
   function setQuery(text) {
     input.value = text;
@@ -310,7 +373,7 @@
       } catch (e) {
         console.error(e);
       }
-    }, 200);
+    }, 350);
   });
 
   input.addEventListener('keydown', (e) => {
@@ -424,8 +487,7 @@
       return;
     }
     try {
-      const res = await fetch(`/parse?q=${encodeURIComponent(text)}`);
-      const data = await res.json();
+      const data = await parseQuerySmart(text);
       if (data.ok) {
         lastParsedData = data;
         let msg = `[${data.engine}] 包含 [${data.target.display}]`;
@@ -443,12 +505,11 @@
         }
 
         if (data.engine.includes("Fallback")) {
-          preview.innerHTML = `<span style="color:#ffb86c;">${msg}</span> (Local Model 未連通)`;
+          preview.innerHTML = `<span style="color:#ffb86c;">${msg}</span> (請確認 LM Studio 已開啟 CORS 與 1234 Port)`;
         } else {
           preview.innerHTML = `<span style="color:#50fa7b;">${msg}</span>`;
         }
 
-        // 更新三切面與 3D 腦區標記
         if (data.target && data.target.mni) {
           targetMarker = { mni: data.target.mni, label: data.target.region_zh || data.target.display };
           setCrosshair(data.target.mni);
@@ -475,12 +536,11 @@
     const status = document.getElementById('status');
     const results = document.getElementById('results');
 
-    status.innerText = "正在經由語意解析並檢索資料庫...";
+    status.innerText = "正在經由 Gemma 3 4B QAT 語意解析並檢索資料庫...";
     results.innerHTML = "";
 
     try {
-      const parseRes = await fetch(`/parse?q=${encodeURIComponent(text)}`);
-      const parsed = await parseRes.json();
+      const parsed = await parseQuerySmart(text);
       if (!parsed.ok || !parsed.target) {
         status.innerText = "無法解析輸入格式，請檢視輸入語句。";
         return;
@@ -505,7 +565,6 @@
         return;
       }
 
-      // 接收文獻活化座標點並繪製於三切面圖上
       studyPeaks = data.peaks || [];
       renderAllViews();
 
@@ -643,7 +702,6 @@
     ctx.fillStyle = '#050505';
     ctx.fillRect(0, 0, W, H);
 
-    // 繪製解剖腦切面模擬輪廓與灰白質結構
     ctx.save();
     ctx.translate(W / 2, H / 2);
     ctx.fillStyle = '#1e242b';
@@ -690,7 +748,6 @@
     }
     ctx.restore();
 
-    // 繪製檢索出的文獻活化點 (黃色點)
     studyPeaks.forEach(pt => {
       const inSlice =
         (plane === 'sagittal' && Math.abs(pt.x - currentMni[0]) <= 12) ||
@@ -705,7 +762,6 @@
       }
     });
 
-    // 繪製 Exclude B 排除腦區標記 (紅色圓圈)
     if (excludeMarker && excludeMarker.mni) {
       const [ex, ey, ez] = excludeMarker.mni;
       const [px, py] = mniToSlicePx(plane, [ex, ey, ez], W, H);
@@ -718,7 +774,6 @@
       ctx.stroke();
     }
 
-    // 繪製 Target A 包含腦區標記 (綠色圓圈)
     if (targetMarker && targetMarker.mni) {
       const [tx, ty, tz] = targetMarker.mni;
       const [px, py] = mniToSlicePx(plane, [tx, ty, tz], W, H);
@@ -731,7 +786,6 @@
       ctx.stroke();
     }
 
-    // 繪製十字準星
     const [cx, cy] = mniToSlicePx(plane, currentMni, W, H);
     ctx.strokeStyle = '#38bdf8';
     ctx.lineWidth = 1.1;
@@ -747,7 +801,6 @@
     ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
     ctx.fill();
 
-    // 方位標示
     ctx.fillStyle = '#777777';
     ctx.font = '10px monospace';
     if (plane === 'sagittal') {
@@ -762,7 +815,6 @@
     }
   }
 
-  // 繪製第 4 格：3D 立體玻璃腦腦區標示圖
   function draw3DBrain() {
     const canvas = document.getElementById('canvas-3d');
     if (!canvas) return;
@@ -774,7 +826,6 @@
     ctx.fillStyle = '#050505';
     ctx.fillRect(0, 0, W, H);
 
-    // 3D 立體透視玻璃腦輪廓
     ctx.save();
     ctx.strokeStyle = '#3b4859';
     ctx.fillStyle = 'rgba(56, 189, 248, 0.05)';
@@ -784,7 +835,6 @@
     ctx.fill();
     ctx.stroke();
 
-    // 立體經緯網格線
     ctx.strokeStyle = 'rgba(100, 116, 139, 0.25)';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -799,7 +849,6 @@
       return [px, py];
     };
 
-    // 繪製所有預設 3D 腦區節點
     ATLAS_REGIONS.forEach(reg => {
       const [px, py] = project3D(reg.mni);
       ctx.fillStyle = 'rgba(148, 163, 184, 0.45)';
@@ -808,7 +857,6 @@
       ctx.fill();
     });
 
-    // 標示 Exclude B (紅點)
     if (excludeMarker && excludeMarker.mni) {
       const [px, py] = project3D(excludeMarker.mni);
       ctx.fillStyle = '#ff5555';
@@ -820,7 +868,6 @@
       ctx.fillText('Exclude B', Math.min(W - 55, px + 8), py + 3);
     }
 
-    // 標示 Target A (綠點)
     if (targetMarker && targetMarker.mni) {
       const [px, py] = project3D(targetMarker.mni);
       ctx.fillStyle = '#50fa7b';
@@ -832,7 +879,6 @@
       ctx.fillText('Target A', Math.min(W - 52, px + 8), py - 5);
     }
 
-    // 標示目前 3D 十字準星位置
     const [curX, curY] = project3D(currentMni);
     ctx.strokeStyle = '#38bdf8';
     ctx.lineWidth = 1.5;
@@ -872,7 +918,6 @@
     draw3DBrain();
   }
 
-  // 初始化繪製
   setCrosshair([0, -52, 26]);
 </script>
 </body>
